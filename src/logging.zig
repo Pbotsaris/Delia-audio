@@ -11,6 +11,7 @@ pub fn logFn(
 
     const scope_prefix = "(" ++ switch (scope) {
         .main,
+        .alsa,
         std.log.default_log_scope,
         => @tagName(scope),
         else => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
@@ -21,8 +22,6 @@ pub fn logFn(
 
     const prefix = "[" ++ comptime level.asText() ++ "] " ++ scope_prefix;
 
-    // TODO: only works on 0.13.0
-    //
     std.debug.lockStdErr();
     defer std.debug.unlockStdErr();
     const stderr = std.io.getStdErr().writer();

@@ -1,4 +1,5 @@
 const std = @import("std");
+const alsa = @import("alsa/alsa.zig");
 
 pub const std_options = .{
     .log_level = .debug,
@@ -8,8 +9,12 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    log.info("Hello, {s}!", .{"world"});
-    log.warn("Hello, {s}!", .{"world"});
-    log.err("Hello, {s}!", .{"world"});
-    log.debug("Hello, {s}!", .{"world"});
+    var device = try alsa.Device.init(.{
+        .sample_rate = 44100,
+        .channels = 2,
+        .stream_type = alsa.Device.StreamType.playback,
+        .mode = alsa.Device.MODE_NONE,
+    });
+
+    try device.deinit();
 }
