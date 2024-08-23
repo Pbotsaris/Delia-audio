@@ -17,4 +17,17 @@ pub fn main() !void {
     });
 
     try device.deinit();
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) log.err("Failed to deinit allocator.", .{});
+
+    const allocator = gpa.allocator();
+
+    var a = try alsa.Alsa.init(allocator);
+    defer a.deinit();
+    const card = a.cards.items[0];
+    const dev = card.playbacks.items[0];
+
+    log.info("Card: {s}", .{card.details.name});
+    log.info("Device: {s}", .{dev.name});
 }
