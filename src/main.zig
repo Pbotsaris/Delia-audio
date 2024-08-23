@@ -9,25 +9,24 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    var device = try alsa.Device.init(.{
-        .sample_rate = 44100,
-        .channels = 2,
-        .stream_type = alsa.Device.StreamType.playback,
-        .mode = alsa.Device.MODE_NONE,
-    });
-
-    try device.deinit();
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) log.err("Failed to deinit allocator.", .{});
 
     const allocator = gpa.allocator();
 
-    var a = try alsa.Alsa.init(allocator);
-    defer a.deinit();
-    const card = a.cards.items[0];
-    const dev = card.playbacks.items[0];
+    var hardware = try alsa.Hardware.init(allocator);
+    defer hardware.deinit();
 
-    log.info("Card: {s}", .{card.details.name});
-    log.info("Device: {s}", .{dev.name});
+    const card = try hardware.getCard(0);
+    const playback = try card.getPlayback(0);
+
+    var device = try alsa.Device.init(.{
+        .sample_rate = 44100,
+        .channels = 2,
+        .stream_type = alsa.Device.StreamType.playback,
+        .mode = alsa.Device.MODE_NONE,
+        .handler_name = playback.handler,
+    });
+
+    try device.deinit();
 }

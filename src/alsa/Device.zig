@@ -38,6 +38,7 @@ const DeviceOptions = struct {
     channels: u32,
     stream_type: StreamType,
     mode: c_int,
+    handler_name: [:0]const u8 = "default",
 };
 
 pub fn init(opts: DeviceOptions) !Device {
@@ -46,7 +47,7 @@ pub fn init(opts: DeviceOptions) !Device {
     var sample_rate: u32 = opts.sample_rate;
     var dir: i32 = 0;
 
-    var res = c_alsa.snd_pcm_open(&pcm_handle, "default", @intFromEnum(opts.stream_type), opts.mode);
+    var res = c_alsa.snd_pcm_open(&pcm_handle, opts.handler_name.ptr, @intFromEnum(opts.stream_type), opts.mode);
     if (res < 0) {
         log.err("Failed to open PCM: {s}", .{c_alsa.snd_strerror(res)});
         return AlsaError.device_init;
