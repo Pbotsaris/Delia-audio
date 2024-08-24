@@ -27,5 +27,7 @@ pub fn main() !void {
         .mode = alsa.Device.Mode.none,
         .handler_name = playback.handler,
     });
+
+    try device.prepare();
     try device.deinit();
 }

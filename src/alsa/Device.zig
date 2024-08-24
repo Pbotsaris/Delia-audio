@@ -57,7 +57,7 @@ pub fn init(opts: DeviceOptions) !Device {
 
     var err = c_alsa.snd_pcm_open(&pcm_handle, opts.handler_name.ptr, @intFromEnum(opts.stream_type), @intFromEnum(opts.mode));
     if (err < 0) {
-        log.err("Failed to open PCM: {s}", .{c_alsa.snd_strerror(err)});
+        log.err("Failed to open PCM for StreamType: {s}, Mode: {s}: {s}", .{ @tagName(opts.stream_type), @tagName(opts.mode), c_alsa.snd_strerror(err) });
         return AlsaError.device_init;
     }
 
@@ -73,14 +73,14 @@ pub fn init(opts: DeviceOptions) !Device {
     err = c_alsa.snd_pcm_hw_params_set_access(pcm_handle, params, @intFromEnum(opts.access_type));
 
     if (err < 0) {
-        log.err("Failed to set access type: {s}", .{c_alsa.snd_strerror(err)});
+        log.err("Failed to set access type '{s}': {s}", .{ @tagName(opts.access_type), c_alsa.snd_strerror(err) });
         return AlsaError.device_init;
     }
 
     err = c_alsa.snd_pcm_hw_params_set_format(pcm_handle, params, @intFromEnum(opts.format));
 
     if (err < 0) {
-        log.err("Failed to set sample format: {s}", .{c_alsa.snd_strerror(err)});
+        log.err("Failed to set sample format '{s}': {s}", .{ @tagName(opts.format), c_alsa.snd_strerror(err) });
         return AlsaError.device_init;
     }
 
@@ -130,7 +130,7 @@ pub fn prepare(self: *Device) !void {
         return AlsaError.device_prepare;
     }
 
-    err = c_alsa.snd_pcm_sw_params_current(self.pcm_handler, self.sw_params);
+    err = c_alsa.snd_pcm_sw_params_current(self.pcm_handle, self.sw_params);
 
     if (err < 0) {
         log.err("Failed to get current software parameters: {s}", .{c_alsa.snd_strerror(err)});
@@ -138,28 +138,28 @@ pub fn prepare(self: *Device) !void {
     }
 
     // The audio interface will interrupt the CPU at every buffer_size frames to deliver new audio data
-    err = c_alsa.snd_pcm_sw_params_set_avail_min(self.pcm_handler, self.sw_params, @intFromEnum(self.buffer_size));
+    err = c_alsa.snd_pcm_sw_params_set_avail_min(self.pcm_handle, self.sw_params, @intFromEnum(self.buffer_size));
 
     if (err < 0) {
-        log.err("Failed to set minimum available count '{d}': {s}", .{ self.buffer_size, c_alsa.snd_strerror(err) });
+        log.err("Failed to set minimum available count '{s}': {s}", .{ @tagName(self.buffer_size), c_alsa.snd_strerror(err) });
         return AlsaError.device_prepare;
     }
 
-    err = c_alsa.snd_pcm_sw_params_set_start_threshold(self.pcm_handler, self.sw_params, self.start_thresh);
+    err = c_alsa.snd_pcm_sw_params_set_start_threshold(self.pcm_handle, self.sw_params, self.start_thresh);
 
     if (err < 0) {
-        log.err("Failed to set start threshold '{d}': {s}", .{ self.start_delay, c_alsa.snd_strerror(err) });
+        log.err("Failed to set start threshold '{d}': {s}", .{ self.start_thresh, c_alsa.snd_strerror(err) });
         return AlsaError.device_prepare;
     }
 
-    err = c_alsa.snd_pcm_sw_params(self.pcm_handler, self.sw_params);
+    err = c_alsa.snd_pcm_sw_params(self.pcm_handle, self.sw_params);
 
     if (err < 0) {
         log.err("Failed to set software parameters: {s}", .{c_alsa.snd_strerror(err)});
         return AlsaError.device_prepare;
     }
 
-    err = c_alsa.snd_pcm_prepare(self.pcm_handler);
+    err = c_alsa.snd_pcm_prepare(self.pcm_handle);
 
     if (err < 0) {
         log.err("Failed to prepare Audio Interface: {s}", .{c_alsa.snd_strerror(err)});
