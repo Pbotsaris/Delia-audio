@@ -24,9 +24,8 @@ pub fn main() !void {
         .sample_rate = 44100,
         .channels = 2,
         .stream_type = alsa.Device.StreamType.playback,
-        .mode = alsa.Device.MODE_NONE,
+        .mode = alsa.Device.Mode.none,
         .handler_name = playback.handler,
     });
-
     try device.deinit();
 }
