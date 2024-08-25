@@ -7,12 +7,55 @@ pub const StreamType = enum(c_uint) {
     capture = c_alsa.SND_PCM_STREAM_CAPTURE,
 };
 
+pub const StartThreshold = enum(u32) {
+    one_period = 1,
+    two_periods = 2,
+    three_periods = 3,
+    four_periods = 4,
+    five_periods = 5,
+};
+
+pub const Strategy = enum {
+    period_event,
+    min_available,
+};
+
 pub const BufferSize = enum(u32) {
-    sr_216 = 216,
-    sr_521 = 512,
-    sr_1024 = 1024,
-    sr_2048 = 2048,
-    sr_4096 = 4096,
+    bz_216 = 216,
+    bz_521 = 512,
+    bz_1024 = 1024,
+    bz_2048 = 2048,
+    bz_4096 = 4096,
+};
+
+pub const ChannelCount = enum(u32) {
+    mono = 1,
+    stereo = 2,
+    quad = 4,
+    surround_5_1 = 6,
+    surround_7_1 = 8,
+};
+
+// https://en.wikipedia.org/wiki/Sampling_(signal_processing)
+// ommting incredibly high sample rates
+pub const SampleRate = enum(u32) {
+    sr_8Khz = 8000,
+    sr_11Khz = 11025,
+    sr_16Khz = 16000,
+    sr_22Khz = 22050,
+    sr_32Khz = 32000, // miniDV isoterical sample rate
+    sr_37Khz = 37800, // CD-XA audio
+    sr_44k56hz = 44056, // NTSC color subcarrier
+    sr_44Khz = 44100,
+    sr_50Khz = 50000,
+    sr_50k400hz = 50400, // DAT audio
+    sr_64Khz = 64000, // very unconventional
+    sr_48Khz = 48000,
+    sr_82Khz = 82000,
+    sr_96Khz = 96000,
+    sr_176Khz = 176400, // HDCD recorders. 4x CD audio
+    sr_192Khz = 192000,
+    sr_352Khz = 352800,
 };
 
 // interleaved channels     [L1 R1 L2 R2 L3 R3 3R...]
@@ -45,7 +88,17 @@ pub const Mode = enum(c_int) {
     no_autoformat = c_alsa.SND_PCM_NO_AUTO_FORMAT,
 };
 
-pub const Format = enum(c_int) {
+pub const Signedness = enum(u32) {
+    signed,
+    unsigned,
+};
+
+pub const ByteOrder = enum(u32) {
+    little_endian,
+    big_endian,
+};
+
+pub const FormatType = enum(c_int) {
     unknown = c_alsa.SND_PCM_FORMAT_UNKNOWN,
 
     // 8-bit integer formats
@@ -88,22 +141,22 @@ pub const Format = enum(c_int) {
     // These formats use 3 bytes per sample instead of 4, making them more compact than the regular 24-bit formats
 
     // 24-bit packed formats (3 bytes per sample)
-    signed_24_3bits_little_endian = c_alsa.SND_PCM_FORMAT_S24_3LE,
-    signed_24_3bits_big_endian = c_alsa.SND_PCM_FORMAT_S24_3BE,
-    unsigned_24_3bits_little_endian = c_alsa.SND_PCM_FORMAT_U24_3LE,
-    unsigned_24_3bits_big_endian = c_alsa.SND_PCM_FORMAT_U24_3BE,
+    signed_24bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_S24_3LE,
+    signed_24bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S24_3BE,
+    unsigned_24bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U24_3LE,
+    unsigned_24bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U24_3BE,
 
     // 20-bit packed formats (3 bytes per sample)
-    signed_20_3bits_little_endian = c_alsa.SND_PCM_FORMAT_S20_3LE,
-    signed_20_3bits_big_endian = c_alsa.SND_PCM_FORMAT_S20_3BE,
-    unsigned_20_3bits_little_endian = c_alsa.SND_PCM_FORMAT_U20_3LE,
-    unsigned_20_3bits_big_endian = c_alsa.SND_PCM_FORMAT_U20_3BE,
+    signed_20bits_packed3_little_endianendian = c_alsa.SND_PCM_FORMAT_S20_3LE,
+    signed_20bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S20_3BE,
+    unsigned_20bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U20_3LE,
+    unsigned_20bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U20_3BE,
 
     // 18-bit packed formats (3 bytes per sample)
-    signed_18_3bits_little_endian = c_alsa.SND_PCM_FORMAT_S18_3LE,
-    signed_18_3bits_big_endian = c_alsa.SND_PCM_FORMAT_S18_3BE,
-    unsigned_18_3bits_little_endian = c_alsa.SND_PCM_FORMAT_U18_3LE,
-    unsigned_18_3bits_big_endian = c_alsa.SND_PCM_FORMAT_U18_3BE,
+    signed_18bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_S18_3LE,
+    signed_18bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S18_3BE,
+    unsigned_18bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U18_3LE,
+    unsigned_18bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U18_3BE,
 
     // Compressed formats
     mu_law = c_alsa.SND_PCM_FORMAT_MU_LAW, // µ-law compression, common in North American telephony
@@ -117,27 +170,32 @@ pub const Format = enum(c_int) {
     iec958_subframe_little_endian = c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_LE,
     iec958_subframe_big_endian = c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_BE,
 
+    // Note in use
+    //
     // G.723 ADPCM formats
     // G.723 is a codec used for voice compression, especially in telephony
-    g723_24 = c_alsa.SND_PCM_FORMAT_G723_24, // G.723, 24 kbps
-    g723_24_1b = c_alsa.SND_PCM_FORMAT_G723_24_1B, // G.723, 24 kbps, 1-byte alignment
-    g723_40 = c_alsa.SND_PCM_FORMAT_G723_40, // G.723, 40 kbps
-    g723_40_1b = c_alsa.SND_PCM_FORMAT_G723_40_1B, // G.723, 40 kbps, 1-byte alignment
+    // g723_24 = c_alsa.SND_PCM_FORMAT_G723_24, // G.723, 24 kbps
+    // g723_24_1b = c_alsa.SND_PCM_FORMAT_G723_24_1B, // G.723, 24 kbps, 1-byte alignment
+    // g723_40 = c_alsa.SND_PCM_FORMAT_G723_40, // G.723, 40 kbps
+    // g723_40_1b = c_alsa.SND_PCM_FORMAT_G723_40_1B, // G.723, 40 kbps, 1-byte alignment
+    /////////////////////////////////////////////////////////////
 
+    // Note in use
+    //
     // DSD (Direct Stream Digital) formats
     // DSD is a high-resolution audio format used in SACDs (Super Audio CDs) and other high-fidelity audio systems
-    dsd_u8 = c_alsa.SND_PCM_FORMAT_DSD_U8,
-    dsd_u16_little_endian = c_alsa.SND_PCM_FORMAT_DSD_U16_LE,
-    dsd_u32_little_endian = c_alsa.SND_PCM_FORMAT_DSD_U32_LE,
-    dsd_u16_big_endian = c_alsa.SND_PCM_FORMAT_DSD_U16_BE,
-    dsd_u32_big_endian = c_alsa.SND_PCM_FORMAT_DSD_U32_BE,
+    // dsd_u8 = c_alsa.SND_PCM_FORMAT_DSD_U8,
+    // dsd_u16_little_endian = c_alsa.SND_PCM_FORMAT_DSD_U16_LE,
+    // dsd_u16_big_endian = c_alsa.SND_PCM_FORMAT_DSD_U16_BE,
+    // dsd_u32_little_endian = c_alsa.SND_PCM_FORMAT_DSD_U32_LE,
+    // dsd_u32_big_endian = c_alsa.SND_PCM_FORMAT_DSD_U32_BE,
+    /////////////////////////////////////////////////////////////
 
     // Special format
     // This is a catch-all for formats that don't fit into the standard categories, used for custom or non-standard formats
-    special = c_alsa.SND_PCM_FORMAT_SPECIAL,
+    // special = c_alsa.SND_PCM_FORMAT_SPECIAL,
 
     ////////// same as the little endian counterparts ///////////
-    //
     // signed_16bits = c_alsa.SND_PCM_FORMAT_S16,
     // unsigned_16bits = c_alsa.SND_PCM_FORMAT_U16,
     // signed_24bits = c_alsa.SND_PCM_FORMAT_S24,
@@ -149,7 +207,89 @@ pub const Format = enum(c_int) {
     // signed_20bits = c_alsa.SND_PCM_FORMAT_S20,
     // unsigned_20bits = c_alsa.SND_PCM_FORMAT_U20,
     // iec958_subframe = c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME,
-    //
     ///////////////////////////////////////////
 
+    pub fn ToType(self: FormatType) type {
+        return switch (self) {
+            .signed_8bits => i8,
+            .unsigned_8bits => u8,
+
+            .signed_16bits_little_endian, .signed_16bits_big_endian => i16,
+            .unsigned_16bits_little_endian, .unsigned_16bits_big_endian => u16,
+
+            // NOTE: that Alsa uses 32 word packed in 4bytesm with the lower 20 bits used
+            // The data is LSB justified, meaning the data is packed towards the least significant bit
+            .signed_20bits_little_endian, .signed_20bits_big_endian => i20,
+            .unsigned_20bits_little_endian, .unsigned_20bits_big_endian => u20,
+
+            // NOTE: that in ALSA this uses 32bits words using the bottom 3 bytes
+            .signed_24bits_little_endian, .signed_24bits_big_endian => i24,
+            .unsigned_24bits_little_endian, .unsigned_24bits_big_endian => u24,
+
+            .signed_32bits_little_endian, .signed_32bits_big_endian => i32,
+            .unsigned_32bits_little_endian, .unsigned_32bits_big_endian => u32,
+
+            // ranges from -1.0 to 1.0
+            .float_32bits_little_endian, .float_32bits_big_endian => f32,
+            .float64_little_endian, .float64_big_endian => f64,
+
+            .signed_24bits_packed3_little_endian,
+            .signed_24bits_packed3_big_endian,
+            .unsigned_24bits_packed3_little_endian,
+            .unsigned_24bits_packed3_big_endian,
+            .signed_20bits_packed3_little_endian,
+            .signed_20bits_packed3_big_endian,
+            .unsigned_20bits_packed3_little_endian,
+            .unsigned_20bits_packed3_big_endian,
+            .signed_18bits_packed3_little_endian,
+            .signed_18bits_packed3_big_endian,
+            .unsigned_18bits_packed3_little_endian,
+            .unsigned_18bits_packed3_big_endian,
+            => [3]u8,
+
+            // Generally 32bits with audio in 16, 20, 24 bits
+            // and the remaining bits is used for syncronization
+            .iec958_subframe_little_endian, .iec958_subframe_big_endian => u32,
+
+            // Compressed formats
+            // will need decoding logic
+            else => u8,
+        };
+    }
+};
+
+pub const formats: [@typeInfo(FormatType).Enum.fields.len]c_int = blk: {
+    const info = @typeInfo(FormatType);
+    const len = info.Enum.fields.len;
+    var temp: [len]c_int = undefined;
+
+    for (0..len) |i| {
+        temp[i] = info.Enum.fields[i].value;
+    }
+
+    break :blk temp;
+};
+
+pub const sample_rates: [@typeInfo(SampleRate).Enum.fields.len]u32 = blk: {
+    const info = @typeInfo(SampleRate);
+    const len = info.Enum.fields.len;
+    var temp: [len]u32 = undefined;
+
+    for (0..len) |i| {
+        temp[i] = info.Enum.fields[i].value;
+    }
+
+    break :blk temp;
+};
+
+pub const channel_counts: [@typeInfo(ChannelCount).Enum.fields.len]u32 = blk: {
+    const info = @typeInfo(ChannelCount);
+    const len = info.Enum.fields.len;
+    var temp: [len]u32 = undefined;
+
+    for (0..len) |i| {
+        temp[i] = info.Enum.fields[i].value;
+    }
+
+    break :blk temp;
 };

@@ -8,11 +8,21 @@ const c_alsa = @cImport({
 
 const Context = @This();
 
-device: Device,
+const TransferMethod = enum {
+    direct,
+    poll,
+    asyncronous,
+};
 
-pub fn init(device: Device) Context {
+device: Device,
+running: bool = false,
+transfer_method: TransferMethod = TransferMethod.direct,
+allocator: std.mem.Allocator,
+
+pub fn init(allocator: std.mem.Allocator, device: Device) Context {
     return .{
-        device.device,
+        .device= device.device,
+        .allocator = allocator,
     };
 }
 
@@ -49,4 +59,11 @@ pub fn start(self: *Device) !void {
         //var buffer: [self.buffer_size]u8 = undefined;
 
     }
+}
+
+fn directWrite(self: *Context) !void {
+    const T: type = self.device.format.ToType();
+    var buffer = try self.allocator.alloc(T, self.device.buffer_size);
+   
+
 }
