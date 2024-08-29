@@ -1,5 +1,6 @@
 const std = @import("std");
 const alsa = @import("alsa/alsa.zig");
+const examples = @import("alsa/examples/examples.zig");
 
 pub const std_options = .{
     .log_level = .debug,
@@ -8,33 +9,5 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer if (gpa.deinit() != .ok) log.err("Failed to deinit allocator.", .{});
-
-    const allocator = gpa.allocator();
-    var hardware = try alsa.Hardware.init(allocator);
-    defer hardware.deinit();
-
-    try hardware.selectAudioCardAt(0);
-    try hardware.selectAudioPortAt(.playback, 0);
-
-    // more options and low level control
-    const card = try hardware.getAudioCardByIdent("hw:0");
-    const playback = try card.getPlaybackAt(0);
-
-    std.debug.print("{s}", .{playback});
-
-    var device = try alsa.Device.init(.{
-        .sample_rate = .sr_44Khz,
-        .channels = .stereo,
-        .stream_type = .playback,
-        .format = .signed_16bits_little_endian,
-        .mode = .none,
-        .ident = playback.identifier,
-    });
-
-    //std.debug.print("{s}", .{device.format});
-
-    try device.prepare(.min_available);
-    try device.deinit();
+    examples.selectingAudioCardAndSupportedSettings();
 }

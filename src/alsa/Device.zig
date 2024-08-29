@@ -1,3 +1,9 @@
+//! The `Device` struct abstracts the initialization and management of an ALSA audio device.
+//! It encapsulates all the necessary configurations and states required to set up and operate
+//! an audio device for playback or capture operations. This struct allows users to specify
+//! various options related to audio format, buffering, access types, and operational modes,
+//! providing a flexible interface for interacting with ALSA.
+
 const std = @import("std");
 const AlsaError = @import("error.zig").AlsaError;
 
@@ -126,11 +132,17 @@ const DeviceOptions = struct {
 };
 
 pub fn fromHardware(hardware: Hardware) !Device {
-    const port = try hardware.getSelectedPort();
+    const port = try hardware.getSelectedAudioPort();
 
-   // const opts = DeviceOptions {
-   // }
+    const opts = DeviceOptions{
+        .sample_rate = port.selected_settings.sample_rate,
+        .channels = port.selected_settings.channels,
+        .stream_type = port.stream_type,
+        .format = port.selected_settings.format,
+        .allow_resampling = true,
+    };
 
+    return try init(opts);
 }
 
 pub fn init(opts: DeviceOptions) !Device {

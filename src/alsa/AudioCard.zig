@@ -1,3 +1,7 @@
+//! `AudioCard` represents a single ALSA audio card, managing its details,
+//! playback, and capture ports. This struct interacts with ALSA to retrieve
+//! and manage audio port information and settings.
+
 const std = @import("std");
 
 const c_alsa = @cImport({
@@ -12,9 +16,6 @@ const ChannelCount = @import("settings.zig").ChannelCount;
 const settings = @import("settings.zig");
 const SupportedSettings = @import("SupportedSettings.zig");
 
-/// `AudioCard` represents a single ALSA audio card, managing its details,
-/// playback, and capture ports. This struct interacts with ALSA to retrieve
-/// and manage audio port information and settings.
 const AudioCard = @This();
 
 const Identifier = struct {
@@ -32,7 +33,7 @@ const AudioCardSettings = struct {
 /// This includes its identifier, name, and various settings related to playback or capture ports.
 ///
 /// This struct is typically used within the `AudioCard` struct to manage individual ports on an audio card.
-const AudioCardInfo = struct {
+pub const AudioCardInfo = struct {
     /// The index of the audio card or port.
     index: c_int,
     /// The ALSA id string for the card or port.
@@ -47,7 +48,7 @@ const AudioCardInfo = struct {
     /// Only applicable for playback or capture details. Card-level details won't have this information,
     supported_settings: ?SupportedSettings = null,
     /// The currently selected settings (format, sample rate, channels) for this audio card or port.
-    sellected_settings: AudioCardSettings,
+    selected_settings: AudioCardSettings,
     /// The type of stream (playback or capture) associated with this audio card or port.
     stream_type: ?StreamType = null,
     allocator: std.mem.Allocator,
@@ -64,6 +65,7 @@ const AudioCardInfo = struct {
         var details = AudioCardInfo{
             .allocator = allocator,
             .index = if (ident.device >= 0) ident.device else ident.card,
+            .selected_settings = AudioCardSettings{},
         };
 
         const spanned_id = std.mem.span(id);
@@ -86,7 +88,6 @@ const AudioCardInfo = struct {
 
         // for sentinel termination
         details.identifier = try details.allocator.dupeZ(u8, identifier);
-        details.selected_settings = AudioCardSettings{};
         return details;
     }
 
@@ -100,9 +101,9 @@ const AudioCardInfo = struct {
         self.stream_type = stream_type;
 
         const ss = self.supported_settings orelse return;
-        if (ss.formats.len >= 0) self.selected_settings.format = ss.formats[0];
-        if (ss.sample_rates.len >= 0) self.selected_settings.sample_rate = ss.sample_rates[0];
-        if (ss.channels.len >= 0) self.selected_settings.channels = ss.channels[0];
+        if (ss.formats.items.len >= 0) self.selected_settings.format = ss.formats.items[0];
+        if (ss.sample_rates.items.len >= 0) self.selected_settings.sample_rate = ss.sample_rates.items[0];
+        if (ss.channel_counts.items.len >= 0) self.selected_settings.channels = ss.channel_counts.items[0];
     }
 
     pub fn format(self: AudioCardInfo, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {

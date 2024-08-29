@@ -1,3 +1,11 @@
+//! `Hardware` manages ALSA audio cards and ports on the system.
+//! It handles the initialization, selection, and configuration of audio cards
+//! and ports. This struct interacts with the ALSA API to gather and manage
+//! information about available audio cards and their capabilities.
+//!
+//! The `Hardware` struct should be initialized once during the application
+//! lifecycle and should be deinitialized when no longer needed to free up
+//! resources.
 const std = @import("std");
 const log = std.log.scoped(.alsa);
 pub const Device = @import("Device.zig");
@@ -8,14 +16,6 @@ const c_alsa = @cImport({
     @cInclude("alsa/asoundlib.h");
 });
 
-/// `Hardware` manages ALSA audio cards and ports on the system.
-/// It handles the initialization, selection, and configuration of audio cards
-/// and ports. This struct interacts with the ALSA API to gather and manage
-/// information about available audio cards and their capabilities.
-///
-/// The `Hardware` struct should be initialized once during the application
-/// lifecycle and should be deinitialized when no longer needed to free up
-/// resources.
 const Hardware = @This();
 
 /// A list of audio cards detected on the system.
@@ -120,14 +120,14 @@ pub fn selectAudioPortAt(self: *Hardware, stream_type: Device.StreamType, at: us
     const selected_card = self.cards.items[self.selected_card];
 
     const ports = switch (stream_type) {
-        Device.StreamType.capture => selected_card.capture_ports,
-        Device.StreamType.playback => selected_card.playback_ports,
+        Device.StreamType.capture => selected_card.captures,
+        Device.StreamType.playback => selected_card.playbacks,
     };
 
-    if (at >= ports.len) {
+    if (at >= ports.items.len) {
         return switch (stream_type) {
-            Device.StreamType.capture => AlsaError.capture_port_out_of_bounds,
-            Device.StreamType.playback => AlsaError.playback_port_out_of_bounds,
+            Device.StreamType.capture => AlsaError.capture_out_of_bounds,
+            Device.StreamType.playback => AlsaError.playback_out_of_bounds,
         };
     }
 
