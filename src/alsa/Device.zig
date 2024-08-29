@@ -17,6 +17,7 @@ pub const ByteOrder = @import("settings.zig").ByteOrder;
 pub const Strategy = @import("settings.zig").Strategy;
 pub const SampleRate = @import("settings.zig").SampleRate;
 pub const ChannelCount = @import("settings.zig").ChannelCount;
+pub const Hardware = @import("Hardware.zig");
 pub const Mode = @import("settings.zig").Mode;
 pub const StartThreshold = @import("settings.zig").StartThreshold;
 
@@ -123,6 +124,14 @@ const DeviceOptions = struct {
     format: FormatType = FormatType.signed_16bits_little_endian,
     allow_resampling: bool = false,
 };
+
+pub fn fromHardware(hardware: Hardware) !Device {
+    const port = try hardware.getSelectedPort();
+
+   // const opts = DeviceOptions {
+   // }
+
+}
 
 pub fn init(opts: DeviceOptions) !Device {
     var pcm_handle: ?*c_alsa.snd_pcm_t = null;

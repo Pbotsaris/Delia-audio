@@ -16,6 +16,9 @@ const SupportedSettings = @This();
 formats: std.ArrayList(FormatType),
 sample_rates: std.ArrayList(SampleRate),
 channel_counts: std.ArrayList(Channels),
+selected_format: ?FormatType = null,
+selected_sample_rate: ?SampleRate = null,
+selected_channel_count: ?Channels = null,
 
 pub fn init(allocator: std.mem.Allocator, hw_identifier: [:0]const u8, stream_type: StreamType) ?SupportedSettings {
     var params: ?*c_alsa.snd_pcm_hw_params_t = null;
@@ -77,7 +80,6 @@ pub fn init(allocator: std.mem.Allocator, hw_identifier: [:0]const u8, stream_ty
             };
         }
     }
-
     return .{
         .formats = supported_formats,
         .sample_rates = supported_sample_rates,
@@ -92,18 +94,24 @@ pub fn format(self: SupportedSettings, comptime fmt: []const u8, options: std.fm
     try writer.print("Supported Settings: \n", .{});
 
     try writer.print("  Formats({d}):\n,", .{self.formats.items.len});
-    for (self.formats.items) |f| {
-        try writer.print("   - {s}\n", .{@tagName(f)});
+    for (0.., self.formats.items) |i, f| {
+        if (i == 0) {
+            try writer.print("   - {s}(default)\n", .{@tagName(f)});
+        } else try writer.print("   - {s}\n", .{@tagName(f)});
     }
 
     try writer.print("  Sample Rates({d}):\n", .{self.sample_rates.items.len});
-    for (self.sample_rates.items) |sr| {
-        try writer.print("   - {d}\n", .{@intFromEnum(sr)});
+    for (0.., self.sample_rates.items) |i, sr| {
+        if (i == 0) {
+            try writer.print("   - {d}(default)\n", .{@intFromEnum(sr)});
+        } else try writer.print("   - {d}\n", .{@intFromEnum(sr)});
     }
 
     try writer.print("  Channel Count({d}):\n", .{self.channel_counts.items.len});
-    for (self.channel_counts.items) |c| {
-        try writer.print("   - {s}: {d}\n", .{ @tagName(c), @intFromEnum(c) });
+    for (0.., self.channel_counts.items) |i, c| {
+        if (i == 0) {
+            try writer.print("   - {s}: {d}(default)\n", .{ @tagName(c), @intFromEnum(c) });
+        } else try writer.print("   - {s}: {d}\n", .{ @tagName(c), @intFromEnum(c) });
     }
 }
 

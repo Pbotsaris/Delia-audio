@@ -5,7 +5,6 @@ pub const std_options = .{
     .log_level = .debug,
     .logFn = @import("logging.zig").logFn,
 };
-
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
@@ -16,8 +15,12 @@ pub fn main() !void {
     var hardware = try alsa.Hardware.init(allocator);
     defer hardware.deinit();
 
-    const card = try hardware.getCardAt(1);
-    const playback = try card.getPlayback(0);
+    try hardware.selectAudioCardAt(0);
+    try hardware.selectAudioPortAt(.playback, 0);
+
+    // more options and low level control
+    const card = try hardware.getAudioCardByIdent("hw:0");
+    const playback = try card.getPlaybackAt(0);
 
     std.debug.print("{s}", .{playback});
 
@@ -30,7 +33,7 @@ pub fn main() !void {
         .ident = playback.identifier,
     });
 
-    std.debug.print("{s}", .{device.format});
+    //std.debug.print("{s}", .{device.format});
 
     try device.prepare(.min_available);
     try device.deinit();
