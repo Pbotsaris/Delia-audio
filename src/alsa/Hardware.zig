@@ -189,11 +189,24 @@ pub fn setAudioPortChannelCount(self: *Hardware, channel_count: AudioCard.Channe
 ///
 /// - `format`: The desired audio format.
 /// - Errors: Returns an error if no cards are available or if the format is invalid.
-pub fn setAudioPortFormat(self: *Hardware, format: AudioCard.FormatType) !void {
+pub fn setAudioPortFormat(self: *Hardware, fmt: AudioCard.FormatType) !void {
     try errWhenEmpty(self.cards.items.len);
 
     const card = self.cards.items[self.selected_card];
-    try card.setFormat(self.selected_stream_type, self.selected_port, format);
+    try card.setFormat(self.selected_stream_type, self.selected_port, fmt);
+}
+
+pub fn format(self: Hardware, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    _ = fmt;
+    _ = options;
+
+    try writer.print("Audio Hardware Info\n", .{});
+
+    for (0.., self.cards.items) |i, card| {
+        try writer.print("Card {d}\n", .{i});
+        try writer.print("{s}", .{card});
+        try writer.print("\n", .{});
+    }
 }
 
 // Private

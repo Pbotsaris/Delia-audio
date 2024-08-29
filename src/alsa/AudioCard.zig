@@ -110,13 +110,25 @@ pub const AudioCardInfo = struct {
         _ = fmt;
         _ = options;
 
-        try writer.print("Ident:       {s}\n", .{self.identifier});
-        try writer.print("ID:          {s}\n", .{self.id});
-        try writer.print("Name:        {s}\n", .{self.name});
+        // null means the info is for a card, not a port, so we adjust indentation
+        if (self.supported_settings == null) {
+            try writer.print("  │   Ident:       {s}\n", .{self.identifier});
+            try writer.print("  │   ID:          {s}\n", .{self.id});
+            try writer.print("  │   Name:        {s}\n", .{self.name});
+            try writer.print("  │   Index:       {d}\n", .{self.index});
+            try writer.print("  │\n", .{});
+            return;
+        }
+
+        try writer.print("  │    │   Ident:       {s}\n", .{self.identifier});
+        try writer.print("  │    │   ID:          {s}\n", .{self.id});
+        try writer.print("  │    │   Name:        {s}\n", .{self.name});
+        try writer.print("  │    │   Index:       {d}\n", .{self.index});
 
         if (self.stream_type) |st| {
-            try writer.print("Stream Type: {s}\n", .{@tagName(st)});
+            try writer.print("  │    │   Stream Type: {s}\n", .{@tagName(st)});
         }
+        try writer.print("  │    │\n", .{});
 
         if (self.supported_settings) |ss| {
             try writer.print("{s}", .{ss});
@@ -316,22 +328,35 @@ pub fn format(self: AudioCard, comptime fmt: []const u8, options: std.fmt.Format
     _ = fmt;
     _ = options;
 
-    try writer.print("\n{s}\n", .{self.details});
-    try writer.print("Playbacks: ({d})\n", .{self.playbacks.items.len});
+    try writer.print("\n{s}", .{self.details});
+    try writer.print("  ├── Playbacks: ({d})\n", .{self.playbacks.items.len});
+
+    if (self.playbacks.items.len == 0) {
+        try writer.print("  │    ├── N/A.\n", .{});
+    }
 
     for (0.., self.playbacks.items) |i, playback| {
-        try writer.print("Select Methods:\n", .{});
-        try writer.print("  hardware.selectPortAt(.playback, {d})\n", .{i});
-        try writer.print("  card.selectPlaybackAt({d})\n", .{i});
-        try writer.print("{s}\n", .{playback});
+        try writer.print("  │    ├── PLAYBACK PORT: {d}\n", .{i});
+        try writer.print("{s}", .{playback});
+        try writer.print("  │    ├──  Select Methods:\n", .{});
+        try writer.print("  │    │  hardware.selectPortAt(.playback, {d})\n", .{i});
+        try writer.print("  │    │  card.selectPlaybackAt({d})\n", .{i});
+        try writer.print("  │    └──\n", .{});
     }
-    try writer.print("Captures: ({d})\n", .{self.captures.items.len});
+
+    try writer.print("  ├── Captures: ({d})\n", .{self.captures.items.len});
+
+    if (self.captures.items.len == 0) {
+        try writer.print("  │    ├── N/A.\n", .{});
+    }
 
     for (0.., self.captures.items) |i, capture| {
-        try writer.print("Select Methods:\n", .{});
-        try writer.print("  hardware.selectPortAt(.capture, {d})\n", .{i});
-        try writer.print("  card.selectCaptureAt({d})\n", .{i});
-        try writer.print("{s}\n\n", .{capture});
+        try writer.print("  │    ├── CAPTURE PORT: {d}\n", .{i});
+        try writer.print("{s}", .{capture});
+        try writer.print("  │    ├── Select Methods:\n", .{});
+        try writer.print("  │    │ hardware.selectPortAt(.capture, {d})\n", .{i});
+        try writer.print("  │    │ card.selectCaptureAt({d})\n", .{i});
+        try writer.print("  │    └──\n", .{});
     }
 }
 

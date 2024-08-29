@@ -91,28 +91,30 @@ pub fn format(self: SupportedSettings, comptime fmt: []const u8, options: std.fm
     _ = fmt;
     _ = options;
 
-    try writer.print("Supported Settings: \n", .{});
+    try writer.print("  │    │     ├──  Supported Settings: \n", .{});
 
-    try writer.print("  Formats({d}):\n,", .{self.formats.items.len});
+    try writer.print("  │    │     │     Formats({d}):\n", .{self.formats.items.len});
     for (0.., self.formats.items) |i, f| {
         if (i == 0) {
-            try writer.print("   - {s}(default)\n", .{@tagName(f)});
-        } else try writer.print("   - {s}\n", .{@tagName(f)});
+            try writer.print("  │    │     │    - {s}(default)\n", .{@tagName(f)});
+        } else try writer.print("  │    │     │    - {s}\n", .{@tagName(f)});
     }
 
-    try writer.print("  Sample Rates({d}):\n", .{self.sample_rates.items.len});
+    try writer.print("  │    │     ├── Sample Rates({d}):\n", .{self.sample_rates.items.len});
     for (0.., self.sample_rates.items) |i, sr| {
         if (i == 0) {
-            try writer.print("   - {d}(default)\n", .{@intFromEnum(sr)});
-        } else try writer.print("   - {d}\n", .{@intFromEnum(sr)});
+            try writer.print("  │    │     │    - {d}hz(default)\n", .{@intFromEnum(sr)});
+        } else try writer.print("  │    │     │    - {d}hz\n", .{@intFromEnum(sr)});
     }
 
-    try writer.print("  Channel Count({d}):\n", .{self.channel_counts.items.len});
+    try writer.print("  │    │     ├── Channel Count({d}):\n", .{self.channel_counts.items.len});
     for (0.., self.channel_counts.items) |i, c| {
         if (i == 0) {
-            try writer.print("   - {s}: {d}(default)\n", .{ @tagName(c), @intFromEnum(c) });
-        } else try writer.print("   - {s}: {d}\n", .{ @tagName(c), @intFromEnum(c) });
+            try writer.print("  │    │     │     - {s}: {d}(default)\n", .{ @tagName(c), @intFromEnum(c) });
+        } else try writer.print("  │    │     │     - {s}: {d}\n", .{ @tagName(c), @intFromEnum(c) });
     }
+
+    try writer.print("  │    │     └──\n", .{});
 }
 
 pub fn deinit(self: SupportedSettings) void {
