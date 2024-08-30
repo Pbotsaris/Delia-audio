@@ -287,10 +287,10 @@ pub fn setChannelCount(self: *AudioCard, stream_type: StreamType, at: usize, cha
         return AlsaError.playback_out_of_bounds;
     }
 
-    const port = if (stream_type == .playback) self.playbacks.items[at] else self.captures.items[at];
+    var port = if (stream_type == .playback) self.playbacks.items[at] else self.captures.items[at];
     const ss = port.supported_settings orelse return AlsaError.card_invalid_support_settings;
 
-    for (ss.channels) |channel| {
+    for (ss.channel_counts.items) |channel| {
         if (channel == channel_count) {
             port.selected_settings.channels = channel;
             return;
@@ -311,12 +311,36 @@ pub fn setFormat(self: *AudioCard, stream_type: StreamType, at: usize, audio_for
         return AlsaError.playback_out_of_bounds;
     }
 
-    const port = if (stream_type == .playback) self.playbacks.items[at] else self.captures.items[at];
+    var port = if (stream_type == .playback) self.playbacks.items[at] else self.captures.items[at];
     const ss = port.supported_settings orelse return AlsaError.card_invalid_support_settings;
 
-    for (ss.formats) |f| {
+    for (ss.formats.items) |f| {
         if (f == audio_format) {
-            port.sellected_settings.format = f;
+            port.selected_settings.format = f;
+            return;
+        }
+    }
+
+    return AlsaError.card_invalid_settings;
+}
+
+// Sets the sample rate for the specified port.
+///
+/// - `stream_type`: The type of stream (playback or capture).
+/// - `at`: The index of the port.
+/// - `sample_rate`: The desired sample rate.
+/// - Errors: Returns an error if the index is out of bounds or if the format is invalid.
+pub fn setSampleRate(self: *AudioCard, stream_type: StreamType, at: usize, sample_rate: SampleRate) !void {
+    if (at >= self.captures.items.len) {
+        return AlsaError.playback_out_of_bounds;
+    }
+
+    var port = if (stream_type == .playback) self.playbacks.items[at] else self.captures.items[at];
+    const ss = port.supported_settings orelse return AlsaError.card_invalid_support_settings;
+
+    for (ss.sample_rates.items) |sr| {
+        if (sr == sample_rate) {
+            port.selected_settings.sample_rate = sr;
             return;
         }
     }

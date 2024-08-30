@@ -8,9 +8,13 @@
 //! resources.
 const std = @import("std");
 const log = std.log.scoped(.alsa);
-pub const Device = @import("Device.zig");
-pub const AudioCard = @import("AudioCard.zig");
 const AlsaError = @import("error.zig").AlsaError;
+const FormatType = @import("settings.zig").FormatType;
+const StreamType = @import("settings.zig").StreamType;
+const SampleRate = @import("settings.zig").SampleRate;
+const ChannelCount = @import("settings.zig").ChannelCount;
+
+pub const AudioCard = @import("AudioCard.zig");
 
 const c_alsa = @cImport({
     @cInclude("alsa/asoundlib.h");
@@ -25,7 +29,7 @@ selected_card: usize = 0,
 /// Index of the currently selected audio port on the selected card.
 selected_port: usize = 0,
 /// The type of audio stream currently selected (playback or capture).
-selected_stream_type: Device.StreamType = Device.StreamType.playback,
+selected_stream_type: StreamType = StreamType.playback,
 /// The total number of audio cards detected on the system.
 card_count: usize = 0,
 
@@ -114,20 +118,20 @@ pub fn selectAudioCardByIdent(self: *Hardware, ident: []const u8) !void {
 /// - `stream_type`: The type of stream (playback or capture).
 /// - `at`: The index of the audio port to select.
 /// - Errors: Returns an error if the index is out of bounds or if no cards are available.
-pub fn selectAudioPortAt(self: *Hardware, stream_type: Device.StreamType, at: usize) !void {
+pub fn selectAudioPortAt(self: *Hardware, stream_type: StreamType, at: usize) !void {
     try errWhenEmpty(self.cards.items.len);
 
     const selected_card = self.cards.items[self.selected_card];
 
     const ports = switch (stream_type) {
-        Device.StreamType.capture => selected_card.captures,
-        Device.StreamType.playback => selected_card.playbacks,
+        StreamType.capture => selected_card.captures,
+        StreamType.playback => selected_card.playbacks,
     };
 
     if (at >= ports.items.len) {
         return switch (stream_type) {
-            Device.StreamType.capture => AlsaError.capture_out_of_bounds,
-            Device.StreamType.playback => AlsaError.playback_out_of_bounds,
+            StreamType.capture => AlsaError.capture_out_of_bounds,
+            StreamType.playback => AlsaError.playback_out_of_bounds,
         };
     }
 
@@ -140,7 +144,7 @@ pub fn selectAudioPortAt(self: *Hardware, stream_type: Device.StreamType, at: us
 /// - `stream_type`: The type of stream (playback or capture).
 /// - `ident`: The identifier string of the audio port to select.
 /// - Errors: Returns an error if the identifier is invalid, if no cards are available, or if no matching port is found.
-pub fn selectAudioPortByIdent(self: *Hardware, stream_type: Device.StreamType, ident: []const u8) !void {
+pub fn selectAudioPortByIdent(self: *Hardware, stream_type: StreamType, ident: []const u8) !void {
     try validateIdentifier(ident);
     try errWhenEmpty(self.cards.items.len);
 
@@ -161,13 +165,13 @@ pub fn getSelectedAudioCard(self: Hardware) !AudioCard {
 /// Retrieves the currently selected audio port.
 ///
 /// - Returns: The `AudioCard.AudioCardInfo` of the selected port.
-/// - Errors: Returns an error if no cards are available.
+/// - Errors: Returns an error if no cards are available
 pub fn getSelectedAudioPort(self: Hardware) !AudioCard.AudioCardInfo {
     try errWhenEmpty(self.cards.items.len);
 
     const card = self.cards.items[self.selected_card];
 
-    if (self.selected_stream_type == Device.StreamType.playback) {
+    if (self.selected_stream_type == StreamType.playback) {
         return card.getPlaybackAt(self.selected_port);
     }
 
@@ -177,23 +181,34 @@ pub fn getSelectedAudioPort(self: Hardware) !AudioCard.AudioCardInfo {
 /// Sets the number of channels for the selected audio port.
 ///
 /// - `channel_count`: The desired channel count.
-/// - Errors: Returns an error if no cards are available or if the channel count is invalid.
-pub fn setAudioPortChannelCount(self: *Hardware, channel_count: AudioCard.ChannelCount) !void {
+/// - Errors: Returns an error if no cards are available or if the channel count is invalid or not supported.
+pub fn setSelectedChannelCount(self: *Hardware, channel_count: ChannelCount) !void {
     try errWhenEmpty(self.cards.items.len);
 
-    const card = self.cards.items[self.selected_card];
+    var card = self.cards.items[self.selected_card];
     try card.setChannelCount(self.selected_stream_type, self.selected_port, channel_count);
 }
 
 /// Sets the audio format for the selected audio port.
 ///
 /// - `format`: The desired audio format.
-/// - Errors: Returns an error if no cards are available or if the format is invalid.
-pub fn setAudioPortFormat(self: *Hardware, fmt: AudioCard.FormatType) !void {
+/// - Errors: Returns an error if no cards are available or if the format is invalid or not supported.
+pub fn setSelectedFormat(self: *Hardware, fmt: FormatType) !void {
     try errWhenEmpty(self.cards.items.len);
 
-    const card = self.cards.items[self.selected_card];
+    var card = self.cards.items[self.selected_card];
     try card.setFormat(self.selected_stream_type, self.selected_port, fmt);
+}
+
+/// Sets the sample rate for the selected audio port.
+///
+/// - `format`: The desired audio format.
+/// - Errors: Returns an error if no cards are available or if the sample rate is invalid or not supported.
+pub fn setSelectedSampleRate(self: *Hardware, sample_rate: SampleRate) !void {
+    try errWhenEmpty(self.cards.items.len);
+
+    var card = self.cards.items[self.selected_card];
+    try card.setSampleRate(self.selected_stream_type, self.selected_port, sample_rate);
 }
 
 pub fn format(self: Hardware, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -221,11 +236,11 @@ fn validateIdentifier(ident: []const u8) !void {
     }
 }
 
-fn addCard(alsa: *Hardware, card: AudioCard) !void {
-    try alsa.cards.append(card);
+fn addCard(self: *Hardware, card: AudioCard) !void {
+    try self.cards.append(card);
 }
 
-fn loadSystemCards(alsa: *Hardware) !void {
+fn loadSystemCards(self: *Hardware) !void {
     var card: c_int = -1;
 
     while (c_alsa.snd_card_next(&card) >= 0 and card >= 0) {
@@ -257,13 +272,13 @@ fn loadSystemCards(alsa: *Hardware) !void {
             continue;
         }
 
-        const card_details = try AudioCard.AudioCardInfo.init(alsa.allocator, .{ .card = card, .device = -1 }, c_alsa.snd_ctl_card_info_get_id(info), c_alsa.snd_ctl_card_info_get_name(info));
-        var alsa_card = try AudioCard.init(alsa.allocator, card_details);
+        const card_details = try AudioCard.AudioCardInfo.init(self.allocator, .{ .card = card, .device = -1 }, c_alsa.snd_ctl_card_info_get_id(info), c_alsa.snd_ctl_card_info_get_name(info));
+        var alsa_card = try AudioCard.init(self.allocator, card_details);
 
-        alsa_card = (try addCardDevices(&alsa_card, ctl, Device.StreamType.playback)).*;
-        alsa_card = (try addCardDevices(&alsa_card, ctl, Device.StreamType.capture)).*;
+        alsa_card = (try getCard(&alsa_card, ctl, StreamType.playback)).*;
+        alsa_card = (try getCard(&alsa_card, ctl, StreamType.capture)).*;
 
-        try alsa.addCard(alsa_card);
+        try self.addCard(alsa_card);
         res = c_alsa.snd_ctl_close(ctl);
 
         if (res < 0) {
@@ -272,7 +287,7 @@ fn loadSystemCards(alsa: *Hardware) !void {
     }
 }
 
-fn addCardDevices(card: *AudioCard, ctl: ?*c_alsa.snd_ctl_t, stream_type: Device.StreamType) !*AudioCard {
+fn getCard(card: *AudioCard, ctl: ?*c_alsa.snd_ctl_t, stream_type: StreamType) !*AudioCard {
     var device: c_int = -1;
     var res: c_int = -1;
 
@@ -298,8 +313,8 @@ fn addCardDevices(card: *AudioCard, ctl: ?*c_alsa.snd_ctl_t, stream_type: Device
             continue;
         }
         switch (stream_type) {
-            Device.StreamType.capture => try card.addCapture(device, c_alsa.snd_pcm_info_get_id(pcm_info), c_alsa.snd_pcm_info_get_name(pcm_info)),
-            Device.StreamType.playback => try card.addPlayback(device, c_alsa.snd_pcm_info_get_id(pcm_info), c_alsa.snd_pcm_info_get_name(pcm_info)),
+            StreamType.capture => try card.addCapture(device, c_alsa.snd_pcm_info_get_id(pcm_info), c_alsa.snd_pcm_info_get_name(pcm_info)),
+            StreamType.playback => try card.addPlayback(device, c_alsa.snd_pcm_info_get_id(pcm_info), c_alsa.snd_pcm_info_get_name(pcm_info)),
         }
     }
 

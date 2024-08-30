@@ -3,7 +3,12 @@
 //! an audio device for playback or capture operations. This struct allows users to specify
 //! various options related to audio format, buffering, access types, and operational modes,
 //! providing a flexible interface for interacting with ALSA.
+//!
+//! The Hardware buffer size and period size are calculated based on the user-defined buffer size
+//! for minimizing latency and optimizing performance. This can be further customized by adjusting
+//! the NB_PERIODS constant to increase the number of periods per hardware buffer.
 
+// TODO: Create an Alsa Allocator following the same pattern as STD for memory allocation
 const std = @import("std");
 const AlsaError = @import("error.zig").AlsaError;
 
@@ -14,107 +19,56 @@ const c_alsa = @cImport({
 const log = std.log.scoped(.alsa);
 const Device = @This();
 
-pub const FormatType = @import("settings.zig").FormatType;
-pub const AccessType = @import("settings.zig").AccessType;
-pub const BufferSize = @import("settings.zig").BufferSize;
-pub const StreamType = @import("settings.zig").StreamType;
+pub const Format = @import("Format.zig");
+pub const Hardware = @import("Hardware.zig");
+
 pub const Signedness = @import("settings.zig").Signedness;
 pub const ByteOrder = @import("settings.zig").ByteOrder;
+pub const BufferSize = @import("settings.zig").BufferSize;
+pub const FormatType = @import("settings.zig").FormatType;
+pub const AccessType = @import("settings.zig").AccessType;
+pub const StreamType = @import("settings.zig").StreamType;
 pub const Strategy = @import("settings.zig").Strategy;
 pub const SampleRate = @import("settings.zig").SampleRate;
 pub const ChannelCount = @import("settings.zig").ChannelCount;
-pub const Hardware = @import("Hardware.zig");
 pub const Mode = @import("settings.zig").Mode;
 pub const StartThreshold = @import("settings.zig").StartThreshold;
 
-const Format = struct {
-    // the format type as per ALSA definitions
-    format_type: FormatType,
-    // the signedness of the format: signed or unsigned
-    signedness: Signedness,
-    // the byte order of the format: little or big endian
-    byte_order: ByteOrder,
-    // The number of bits per sample: 8, 16, 24, 32 bits. Negative if not applicable
-    bit_depth: i32,
-    // The number of bytes per sample: 1, 2, 3, 4 bytes. Negative if not applicable
-    byte_rate: i32,
-    // This is the same as bit_depth but also includes any padding bits. Relevant for formats like S24_3LE that are not packed
-    // Negative if not applicable
-    physical_width: i32,
-    // same as byte_rate but for physical width. Negative if not applicable
-    physical_byte_rate: i32,
-
-    pub fn init(fmt: FormatType) Format {
-        const int_fmt = @intFromEnum(fmt);
-        const is_big_endian: bool = c_alsa.snd_pcm_format_little_endian(int_fmt) == 1;
-        const is_signed: bool = c_alsa.snd_pcm_format_signed(int_fmt) == 1;
-
-        const byte_order = if (is_big_endian) ByteOrder.big_endian else ByteOrder.little_endian;
-        const sign_type = if (is_signed) Signedness.signed else Signedness.unsigned;
-
-        const bit_depth = c_alsa.snd_pcm_format_width(int_fmt);
-        const physical_width = c_alsa.snd_pcm_format_physical_width(int_fmt);
-
-        return .{
-            .format_type = fmt,
-            .signedness = sign_type,
-            .byte_order = byte_order,
-            .bit_depth = bit_depth,
-            .byte_rate = if (bit_depth >= 0) @divFloor(bit_depth, 8) else -1,
-            .physical_width = bit_depth,
-            .physical_byte_rate = if (physical_width >= 0) @divFloor(physical_width, 8) else -1,
-        };
-    }
-
-    pub fn format(self: Format, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
-
-        try writer.print("\nFormat\n", .{});
-        try writer.print("| signedness:         {s}\n", .{@tagName(self.signedness)});
-        try writer.print("| byte_order:         {s}\n", .{@tagName(self.byte_order)});
-        try writer.print("| bit_depth:          {d}\n", .{self.bit_depth});
-        try writer.print("| byte_rate:          {d}\n", .{self.byte_rate});
-        try writer.print("| physical_width:     {d}\n", .{self.physical_width});
-        try writer.print("| physical_byte_rate: {d}\n", .{self.physical_byte_rate});
-    }
-};
-
 // this constant will is the multiplier that will define the size of the hardware buffer size.
-pub const NB_PERIODS = 5;
 //  hardware_buffer_size = user_defined_buffer_size * NB_PERIODS
+pub const NB_PERIODS = 5;
 
-// Pointer to the PCM device handle.
+/// Pointer to the PCM device handle.
 pcm_handle: ?*c_alsa.snd_pcm_t = null,
-// Pointer to the hardware parameters configuration.
+/// Pointer to the hardware parameters configuration.
 hw_params: ?*c_alsa.snd_pcm_hw_params_t = null,
-// Pointer to the software parameters configuration.
+/// Pointer to the software parameters configuration.
 sw_params: ?*c_alsa.snd_pcm_sw_params_t = null,
-// Mode for opening the audio device (e.g., non-blocking, async).
+/// Mode for opening the audio device (e.g., non-blocking, async).
 mode: Mode,
-// Indicates whether the device is for playback or capture.
+/// Indicates whether the device is for playback or capture.
 stream_type: StreamType,
-// Number of audio channels (e.g., 2 for stereo).
+/// Number of audio channels (e.g., 2 for stereo).
 channels: u32,
-// Audio device's sample rate in Hz.
+/// Audio device's sample rate in Hz.
 sample_rate: u32,
-// Direction flag for adjusting the sample rate, typically set by ALSA.
+/// Direction flag for adjusting the sample rate, typically set by ALSA.
 dir: i32,
-// Software buffer size in frames. This is the size of the buffer that the audio callback reads/writes.
+/// Software buffer size in frames. This is the size of the buffer that the audio callback reads/writes.
 buffer_size: BufferSize,
-// Total size of the hardware audio buffer in frames.
+/// Total size of the hardware audio buffer in frames.
 hardware_buffer_size: u32,
-// Size of one hardware period in frames.
+/// Size of one hardware period in frames.
 hardware_period_size: u32,
-// Number of periods before ALSA starts reading/writing audio data.
+/// Number of periods before ALSA starts reading/writing audio data.
 start_thresh: StartThreshold,
-// Timeout in milliseconds for ALSA to wait before returning an error during read/write operations.
+/// Timeout in milliseconds for ALSA to wait before returning an error during read/write operations.
 timeout: u32,
-// Defines the transfer method used by the audio callback (e.g., read/write interleaved,  read/write non-interleaved , mmap intereaved).
+/// Defines the transfer method used by the audio callback (e.g., read/write interleaved,  read/write non-interleaved , mmap intereaved).
 access_type: AccessType,
-// Audio sample format (e.g., 16-bit signed little-endian).
-format: Format,
-// TODO: Description
+/// Audio sample format (e.g., 16-bit signed little-endian).
+audio_format: Format,
+/// TODO: Description
 strategy: Strategy = Strategy.min_available,
 
 const DeviceOptions = struct {
@@ -127,7 +81,7 @@ const DeviceOptions = struct {
     start_thresh: StartThreshold = StartThreshold.three_periods,
     timeout: u32 = 1000,
     access_type: AccessType = AccessType.rw_interleaved,
-    format: FormatType = FormatType.signed_16bits_little_endian,
+    audio_format: FormatType = FormatType.signed_16bits_little_endian,
     allow_resampling: bool = false,
 };
 
@@ -135,10 +89,11 @@ pub fn fromHardware(hardware: Hardware) !Device {
     const port = try hardware.getSelectedAudioPort();
 
     const opts = DeviceOptions{
-        .sample_rate = port.selected_settings.sample_rate,
-        .channels = port.selected_settings.channels,
-        .stream_type = port.stream_type,
-        .format = port.selected_settings.format,
+        // we need to figure out how defaults will work
+        .sample_rate = port.selected_settings.sample_rate orelse SampleRate.sr_44Khz,
+        .channels = port.selected_settings.channels orelse ChannelCount.stereo,
+        .audio_format = port.selected_settings.format orelse FormatType.signed_16bits_little_endian,
+        .stream_type = port.stream_type orelse StreamType.playback,
         .allow_resampling = true,
     };
 
@@ -184,10 +139,13 @@ pub fn init(opts: DeviceOptions) !Device {
         return AlsaError.device_init;
     }
 
-    err = c_alsa.snd_pcm_hw_params_set_format(pcm_handle, params, @intFromEnum(opts.format));
+    err = c_alsa.snd_pcm_hw_params_set_format(pcm_handle, params, @intFromEnum(opts.audio_format));
 
     if (err < 0) {
-        log.err("The format is '{s}' not valid for this hardware.Please check the format options of your hardwave with hardware.formats().", .{@tagName(opts.format)});
+        log.err(
+            "The format is '{s}' not valid for this hardware. Please check the format options of your hardwave with hardware.formats().",
+            .{@tagName(opts.audio_format)},
+        );
         log.err("ALSA error: {s}", .{c_alsa.snd_strerror(err)});
         return AlsaError.device_init;
     }
@@ -261,7 +219,7 @@ pub fn init(opts: DeviceOptions) !Device {
         .access_type = opts.access_type,
         .hardware_buffer_size = @as(u32, @intCast(hardware_buffer_size)),
         .hardware_period_size = @as(u32, @intCast(hardware_period_size)),
-        .format = Format.init(opts.format),
+        .audio_format = Format.init(opts.audio_format),
     };
 }
 
@@ -304,9 +262,9 @@ pub fn prepare(self: *Device, strategy: Strategy) !void {
             log.err("Failed to enable period event: {s}", .{c_alsa.snd_strerror(err)});
             return AlsaError.device_prepare;
         }
-    }
 
-    err = c_alsa.snd_pcm_sw_params(self.pcm_handle, self.sw_params);
+        err = c_alsa.snd_pcm_sw_params(self.pcm_handle, self.sw_params);
+    }
 
     if (err < 0) {
         log.err("Failed to set software parameters: {s}", .{c_alsa.snd_strerror(err)});
@@ -319,6 +277,22 @@ pub fn prepare(self: *Device, strategy: Strategy) !void {
         log.err("Failed to prepare Audio Interface: {s}", .{c_alsa.snd_strerror(err)});
         return AlsaError.device_init;
     }
+}
+
+pub fn format(self: Device, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    _ = fmt;
+    _ = options;
+
+    try writer.print("\nDevice\n", .{});
+    try writer.print("  Stream Type:     {s}\n", .{@tagName(self.stream_type)});
+    try writer.print("  Access Type:     {s}\n", .{@tagName(self.access_type)});
+    try writer.print("  Sample Rate:     {d}hz\n", .{self.sample_rate});
+    try writer.print("  Channels:        {d}\n", .{self.channels});
+    try writer.print("  Buffer Size:     {d} bytes\n", .{@intFromEnum(self.buffer_size)});
+    try writer.print("  HW Buffer Size:  {d} bytes\n", .{self.hardware_buffer_size});
+    try writer.print("  Timeout:         {d}ms\n", .{self.timeout});
+    try writer.print("  Open Mode:       {s}\n", .{@tagName(self.mode)});
+    try writer.print("{s}\n", .{self.audio_format});
 }
 
 pub fn deinit(self: *Device) !void {
