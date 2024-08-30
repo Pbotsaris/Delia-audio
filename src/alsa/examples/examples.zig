@@ -18,7 +18,8 @@ pub fn usingHardwareToInitDevice() void {
 
     // To have an overview of the available audio cards, ports as well as their supported settings
     // you can just print the hardware object
-    //std.debug.print("{s}", .{hardware});
+    //
+    //  std.debug.print("{s}", .{hardware});
     //
     //  For every card and port there is a hint on how to select an specific card or port. We will use those.
     //     ├──  Select Methods:
@@ -89,6 +90,11 @@ pub fn manuallyInitializingDevice() void {
         std.debug.print("Failed to get playback port: {}", .{err});
         return;
     };
+
+    // you can check the supported settings for the card and port
+    // playback.supported_settings.?.formats
+    // playback.supported_settings.?.channels
+    // playback.supported_settings.?.sample_rates
 
     // device will fail if settings are not supported by the hardware
     var device = alsa.Device.init(.{
