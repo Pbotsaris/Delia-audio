@@ -1,7 +1,8 @@
 const std = @import("std");
 const alsa = @import("../alsa.zig");
 
-pub fn selectingAudioCardAndSupportedSettings() void {
+// This example shows how to use the hardware object to initialize a device
+pub fn usingHardwareToInitDevice() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
 
@@ -29,9 +30,9 @@ pub fn selectingAudioCardAndSupportedSettings() void {
     hardware.selectAudioCardAt(0) catch |err| std.debug.print("Failed to select audio card: {}", .{err});
     hardware.selectAudioPortAt(.playback, 0) catch |err| std.debug.print("Failed to select audio port: {}", .{err});
 
-    // hardware will fail to select if the setting is not supported by the hardware
     hardware.setSelectedFormat(.signed_16bits_little_endian) catch |err| {
         std.debug.print("Format settings not supported: {}", .{err});
+        // hardware will fail to select if the setting is not supported by the hardware
     };
 
     hardware.setSelectedChannelCount(.stereo) catch |err| {
@@ -43,9 +44,10 @@ pub fn selectingAudioCardAndSupportedSettings() void {
     };
 
     // now you can initialize the device knowing that your settings are supported
-    // if you don't set the settings above, the device will be initialized with the default settings
-
-    var device = alsa.Device.fromHardware(hardware) catch |err| {
+    //  The hardware object will provide the basic info to initialize the device
+    //  but it is possible to configure the device with more options.
+    //  Below an example of setting the buffer size and access type
+    var device = alsa.Device.fromHardware(hardware, .{ .buffer_size = .bz_1024, .access_type = .mmap_interleaved }) catch |err| {
         std.debug.print("Failed to init device: {}", .{err});
         return;
     };
@@ -63,33 +65,51 @@ pub fn selectingAudioCardAndSupportedSettings() void {
     };
 }
 
-pub fn providing() void {
+// This example shows how to manually use your hardware information to initialize a device
+pub fn manuallyInitializingDevice() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
 
     const allocator = gpa.allocator();
 
     // hardware holds information about your system's audio cards and ports
-    var hardware = try alsa.Hardware.init(allocator);
+    var hardware = alsa.Hardware.init(allocator) catch |err| {
+        std.debug.print("Failed to initialize hardware: {}", .{err});
+        return;
+    };
+
     defer hardware.deinit();
 
-    // more options and low level control
-    const card = try hardware.getAudioCardByIdent("hw:0");
-    const playback = try card.getPlaybackAt(0);
+    // grab the first audio card and the first playback port
+    const card = hardware.getAudioCardByIdent("hw:0") catch |err| {
+        std.debug.print("Failed to get audio card: {}", .{err});
+        return;
+    };
+    const playback = card.getPlaybackAt(0) catch |err| {
+        std.debug.print("Failed to get playback port: {}", .{err});
+        return;
+    };
 
-    std.debug.print("{s}", .{playback});
-
-    var device = try alsa.Device.init(.{
+    // device will fail if settings are not supported by the hardware
+    var device = alsa.Device.init(.{
+        // you must provide sample rate, chnanels, format and steam type.
         .sample_rate = .sr_44Khz,
         .channels = .stereo,
         .stream_type = .playback,
-        .format = .signed_16bits_little_endian,
-        .mode = .none,
+        .audio_format = .signed_16bits_little_endian,
         .ident = playback.identifier,
-    });
+    }) catch |err| {
+        std.debug.print("Failed to init device: {}", .{err});
+        return;
+    };
 
-    //std.debug.print("{s}", .{device.format});
+    defer device.deinit() catch |err| {
+        std.debug.print("Failed to deinit device: {}", .{err});
+    };
 
-    try device.prepare(.min_available);
-    try device.deinit();
+    std.debug.print("{s}", .{device});
+
+    device.prepare(.min_available) catch |err| {
+        std.debug.print("Failed to prepare device: {}", .{err});
+    };
 }

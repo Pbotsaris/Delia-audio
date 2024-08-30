@@ -9,5 +9,6 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    examples.selectingAudioCardAndSupportedSettings();
+    examples.usingHardwareToInitDevice();
+    examples.manuallyInitializingDevice();
 }

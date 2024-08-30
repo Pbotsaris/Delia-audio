@@ -72,29 +72,44 @@ audio_format: Format,
 strategy: Strategy = Strategy.min_available,
 
 const DeviceOptions = struct {
+    // there is no default values for these fields, user must provide them
     sample_rate: SampleRate,
     channels: ChannelCount,
     stream_type: StreamType,
-    mode: Mode = Mode.none,
+    audio_format: FormatType,
     ident: [:0]const u8 = "default",
+    mode: Mode = Mode.none,
     buffer_size: BufferSize = BufferSize.bz_2048,
     start_thresh: StartThreshold = StartThreshold.three_periods,
     timeout: u32 = 1000,
     access_type: AccessType = AccessType.rw_interleaved,
-    audio_format: FormatType = FormatType.signed_16bits_little_endian,
     allow_resampling: bool = false,
 };
 
-pub fn fromHardware(hardware: Hardware) !Device {
+const DeviceOptionsFromHardware = struct {
+    mode: Mode = Mode.none,
+    buffer_size: BufferSize = BufferSize.bz_2048,
+    start_thresh: StartThreshold = StartThreshold.three_periods,
+    timeout: u32 = 1000,
+    access_type: AccessType = AccessType.rw_interleaved,
+    allow_resampling: bool = true,
+};
+
+pub fn fromHardware(hardware: Hardware, inc_opts: DeviceOptionsFromHardware) !Device {
     const port = try hardware.getSelectedAudioPort();
 
     const opts = DeviceOptions{
-        // we need to figure out how defaults will work
         .sample_rate = port.selected_settings.sample_rate orelse SampleRate.sr_44Khz,
         .channels = port.selected_settings.channels orelse ChannelCount.stereo,
-        .audio_format = port.selected_settings.format orelse FormatType.signed_16bits_little_endian,
         .stream_type = port.stream_type orelse StreamType.playback,
-        .allow_resampling = true,
+        .audio_format = port.selected_settings.format orelse FormatType.signed_16bits_little_endian,
+        .ident = port.identifier,
+        .mode = inc_opts.mode,
+        .buffer_size = inc_opts.buffer_size,
+        .start_thresh = inc_opts.start_thresh,
+        .timeout = inc_opts.timeout,
+        .access_type = inc_opts.access_type,
+        .allow_resampling = inc_opts.allow_resampling,
     };
 
     return try init(opts);
