@@ -8,62 +8,155 @@ const c_alsa = @cImport({
 
 const Context = @This();
 
-const TransferMethod = enum {
-    direct,
-    poll,
-    asyncronous,
-};
+const log = std.log.scoped(.alsa);
+
+const MAX_RETRY = 50;
+const NANO_SECONDS = 1_000_000; // 100ms
 
 device: Device,
 running: bool = false,
-transfer_method: TransferMethod = TransferMethod.direct,
-allocator: std.mem.Allocator,
+callback: *const fn (*[]u8) void,
 
-pub fn init(allocator: std.mem.Allocator, device: Device) Context {
+pub fn init(device: Device, callback: *const fn (*[]u8) void) Context {
     return .{
-        .device= device.device,
-        .allocator = allocator,
+        .device = device,
+        .callback = callback,
     };
 }
 
-const log = std.log.scoped(.alsa);
+fn xrunRecovery(self: *Context, err: AlsaError) !void {
+    const needs_prepare = switch (err) {
+        AlsaError.xrun => true,
 
-pub fn start(self: *Device) !void {
-    while (self.running) {
-        const err = c_alsa.snd_pcm_wait(self.pcm_handler, self.timeout);
+        AlsaError.suspended => blk: {
+            var res = c_alsa.snd_pcm_resume(self.device.pcm_handle);
+            var sleep: u64 = 100 * NANO_SECONDS;
+            var retries: i32 = MAX_RETRY;
 
-        if (err < 0) {
-            log.debug("Failed to pool device or timeout: {s}", .{c_alsa.snd_strerror(err)});
-            return AlsaError.device_timeout;
-        }
+            while (res == -c_alsa.EAGAIN) {
+                if (retries == 0) {
+                    log.debug("Timeout while trying to resume device.", .{});
+                    return AlsaError.timeout;
+                }
 
-        // how much space is avail for playback data?
-        var frames_avail: c_alsa.snd_pcm_sframes_t = c_alsa.snd_pcm_avail_update(self.pcm_handler);
+                std.time.sleep(sleep);
 
-        if (frames_avail < 0) {
-            switch (frames_avail) {
-                -c_alsa.EPIPE => {
-                    log.debug("Buffer xrun detected");
-                    return AlsaError.device_xrun;
-                },
-                else => {
-                    log.debug("Unexpected error: {s}", .{c_alsa.snd_strerror(frames_avail)});
-                    return AlsaError.device_unexpected;
-                },
+                sleep *= 2; // exponential backoff
+                retries -= 1;
+                res = c_alsa.snd_pcm_resume(self.device.pcm_handle);
             }
-        }
 
-        frames_avail = if (frames_avail > self.buffer_size) self.buffer_size else frames_avail;
+            if (res < 0) break :blk true;
+            break :blk false;
+        },
 
-        // I cant do buff size because it's not comptime, but I can have a buffer with the max size and then slice it
-        //var buffer: [self.buffer_size]u8 = undefined;
+        else => return AlsaError.unexpected,
+    };
 
+    if (!needs_prepare) return;
+
+    const res = c_alsa.snd_pcm_prepare(self.device.pcm_handle);
+
+    if (res < 0) {
+        log.debug("Failed to recover from xrun: {s}", .{c_alsa.snd_strerror(res)});
+        return AlsaError.xrun;
     }
 }
 
-fn directWrite(self: *Context) !void {
-    const T: type = self.device.format.ToType();
-    var buffer = try self.allocator.alloc(T, self.device.buffer_size);
-   
+pub fn start(self: *Context) !void {
+    self.running = true;
+    try self.directWrite();
+}
 
+fn directWrite(self: *Context) !void {
+    const buffer_size: c_alsa.snd_pcm_uframes_t = @intFromEnum(self.device.buffer_size);
+    var areas: ?*c_alsa.snd_pcm_channel_area_t = null;
+    var stopped: bool = true;
+
+    while (self.running) {
+        const state: c_alsa.snd_pcm_state_t = c_alsa.snd_pcm_state(self.device.pcm_handle);
+
+        // Check State
+
+        switch (state) {
+            c_alsa.SND_PCM_STATE_XRUN => {
+                try self.xrunRecovery(AlsaError.xrun);
+                stopped = true;
+            },
+            c_alsa.SND_PCM_STATE_SUSPENDED => try self.xrunRecovery(AlsaError.suspended),
+
+            else => {
+                if (state < 0) {
+                    log.debug("Unexpected state error: {s}", .{c_alsa.snd_strerror(state)});
+                    return AlsaError.unexpected;
+                }
+            },
+        }
+
+        const avail = c_alsa.snd_pcm_avail_update(self.device.pcm_handle);
+
+        if (avail < 0) {
+            const err = if (avail == -c_alsa.EPIPE) AlsaError.xrun else AlsaError.suspended;
+            try self.xrunRecovery(err);
+            continue;
+        }
+
+        if (avail < buffer_size and stopped) {
+            const err = c_alsa.snd_pcm_start(self.device.pcm_handle);
+            if (err < 0) {
+                log.err("Failed to start device: {s}", .{c_alsa.snd_strerror(err)});
+                return AlsaError.device_start;
+            }
+
+            stopped = false;
+            continue;
+        }
+
+        if (avail < buffer_size and !stopped) {
+            const err = c_alsa.snd_pcm_wait(self.device.pcm_handle, self.device.timeout);
+
+            if (err < 0) {
+                const err2 = if (err == -c_alsa.EPIPE) AlsaError.xrun else AlsaError.suspended;
+                try self.xrunRecovery(err2);
+                stopped = true;
+                continue;
+            }
+        }
+
+        // Start Transfer
+
+        // in number of frames
+        var to_transfer = buffer_size;
+        var offset: c_alsa.snd_pcm_uframes_t = 0;
+
+        while (to_transfer > 0) {
+            // we request for a transfer_size frames from begin but it may return less
+            var expected_to_transfer = to_transfer;
+            const res = c_alsa.snd_pcm_mmap_begin(self.device.pcm_handle, &areas, &offset, &expected_to_transfer);
+
+            if (res < 0) {
+                const err = if (res == -c_alsa.EPIPE) AlsaError.xrun else AlsaError.suspended;
+                try self.xrunRecovery(err);
+                stopped = true;
+            }
+
+            const written_area = areas orelse return AlsaError.unexpected;
+            const addr = written_area.addr orelse return AlsaError.unexpected;
+            const byte_rate: c_ulong = @intCast(self.device.audio_format.byte_rate);
+
+            var buffer: []u8 = @as([*]u8, @ptrCast(addr))[0 .. expected_to_transfer * byte_rate];
+
+            self.callback(&buffer);
+
+            const frames_actually_transfered =
+                c_alsa.snd_pcm_mmap_commit(self.device.pcm_handle, offset, expected_to_transfer);
+
+            if (frames_actually_transfered < 0) {
+                const err = if (frames_actually_transfered == -c_alsa.EPIPE) AlsaError.xrun else AlsaError.suspended;
+                try self.xrunRecovery(err);
+            } else if (frames_actually_transfered != expected_to_transfer) try self.xrunRecovery(AlsaError.xrun);
+
+            to_transfer -= @as(c_ulong, @intCast(frames_actually_transfered));
+        }
+    }
 }

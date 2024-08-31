@@ -15,6 +15,23 @@ pub const StartThreshold = enum(u32) {
     five_periods = 5,
 };
 
+/// The `Strategy` enum defines the method by which ALSA will handle audio data transfer.
+///
+/// - `period_event`:
+///   - This strategy enables period events, which means the ALSA hardware will trigger
+///     an interrupt after every period is processed. This approach can reduce CPU usage
+///     by allowing the system to sleep until the period event occurs, making it suitable
+///     for low-latency applications.
+///   - When this strategy is selected, the `avail_min` is set to the full hardware buffer size,
+///     essentially relying on interrupt-driven processing rather than polling or manually
+///     checking for available buffer space.
+///
+/// - `min_available`:
+///   - This strategy disables period events and instead sets `avail_min` to the size of the
+///     period buffer. This means the application will handle data transfer whenever the
+///     buffer has enough space for a full period. It is typically used in scenarios where
+///     more precise control over buffer availability is needed, and where polling or
+///     manual checks are preferred over interrupt-driven processing.
 pub const Strategy = enum {
     period_event,
     min_available,
@@ -58,16 +75,16 @@ pub const SampleRate = enum(u32) {
     sr_352Khz = 352800,
 };
 
-// interleaved channels     [L1 R1 L2 R2 L3 R3 3R...]
-// non-interleaved channels [L1 L2 L3 L4 L5 L6... R1 R2 R3 R4 R5 R6...]
+/// interleaved channels     [L1 R1 L2 R2 L3 R3 3R...]
+/// non-interleaved channels [L1 L2 L3 L4 L5 L6... R1 R2 R3 R4 R5 R6...]
 pub const AccessType = enum(c_uint) {
-    // read-only access: simpler API
-    // use `snd_pcm_readi` and `snd_pcm_writei` to read/write smaples.
+    /// read-only access: simpler API
+    //. use `snd_pcm_readi` and `snd_pcm_writei` to read/write smaples.
     rw_interleaved = c_alsa.SND_PCM_ACCESS_RW_INTERLEAVED,
     rw_noninterleaved = c_alsa.SND_PCM_ACCESS_RW_NONINTERLEAVED,
 
-    // MMAP access: more efficient
-    // can directly map the ALSA b uffer into the application's memory space
+    /// MMAP access: more efficient
+    /// can directly map the ALSA b uffer into the application's memory space
     mmap_interleaved = c_alsa.SND_PCM_ACCESS_MMAP_INTERLEAVED,
     mmap_noninterleaved = c_alsa.SND_PCM_ACCESS_MMAP_NONINTERLEAVED,
 

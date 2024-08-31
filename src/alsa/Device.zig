@@ -63,7 +63,7 @@ hardware_period_size: u32,
 /// Number of periods before ALSA starts reading/writing audio data.
 start_thresh: StartThreshold,
 /// Timeout in milliseconds for ALSA to wait before returning an error during read/write operations.
-timeout: u32,
+timeout: i32,
 /// Defines the transfer method used by the audio callback (e.g., read/write interleaved,  read/write non-interleaved , mmap intereaved).
 access_type: AccessType,
 /// Audio sample format (e.g., 16-bit signed little-endian).
@@ -81,8 +81,8 @@ const DeviceOptions = struct {
     mode: Mode = Mode.none,
     buffer_size: BufferSize = BufferSize.bz_2048,
     start_thresh: StartThreshold = StartThreshold.three_periods,
-    timeout: u32 = 1000,
-    access_type: AccessType = AccessType.rw_interleaved,
+    timeout: i32 = -1,
+    access_type: AccessType = AccessType.mmap_interleaved,
     allow_resampling: bool = false,
 };
 
@@ -90,11 +90,29 @@ const DeviceOptionsFromHardware = struct {
     mode: Mode = Mode.none,
     buffer_size: BufferSize = BufferSize.bz_2048,
     start_thresh: StartThreshold = StartThreshold.three_periods,
-    timeout: u32 = 1000,
+    timeout: i32 = -1,
     access_type: AccessType = AccessType.rw_interleaved,
     allow_resampling: bool = true,
 };
 
+/// Initializes a `Device` using the provided `Hardware` configuration and additional options.
+///
+/// This function retrieves the selected audio port from the `Hardware` instance and uses its
+/// settings (e.g., sample rate, channel count, format) to configure the `Device`. If specific
+/// settings are not available from the hardware, default values are used. The function then
+/// calls the `init` function to configure the ALSA hardware parameters.
+///
+/// # Parameters:
+/// - `hardware`: The `Hardware` instance that provides information about the available audio ports.
+/// - `inc_opts`: Additional options for configuring the `Device`, such as mode, buffer size,
+///   start threshold, timeout, access type, and whether resampling is allowed.
+///
+/// # Returns:
+/// - A `Device` instance configured based on the hardware settings and the provided options.
+/// - Returns an error if the hardware or options cannot be used to initialize the device.
+///
+/// # Errors:
+/// - Returns an error if the selected audio port cannot be retrieved or if the device initialization fails.
 pub fn fromHardware(hardware: Hardware, inc_opts: DeviceOptionsFromHardware) !Device {
     const port = try hardware.getSelectedAudioPort();
 
@@ -115,6 +133,26 @@ pub fn fromHardware(hardware: Hardware, inc_opts: DeviceOptionsFromHardware) !De
     return try init(opts);
 }
 
+/// Initializes the ALSA device with the provided options and configures the hardware parameters.
+///
+/// # Parameters:
+/// - `opts`: A `DeviceOptions` structure containing various settings for the device, such as sample rate,
+///   channels, audio format, buffer size, period size, and more.
+///
+/// # Returns:
+/// - A `Device` instance configured and ready for playback or capture.
+/// - Returns an error if the hardware parameters cannot be set or if the device initialization fails.
+///
+/// # Hardware Configuration:
+/// - `sample_rate`: Sets the desired sample rate. If the hardware cannot match the requested rate, an error is returned.
+/// - `channels`: Configures the number of audio channels.
+/// - `audio_format`: Sets the sample format (e.g., signed 16-bit little-endian).
+/// - `buffer_size` and `hardware_buffer_size`: Configures the software and hardware buffer sizes, optimizing for latency.
+/// - `hardware_period_size`: Defines the period size, determining the frequency of hardware interrupts.
+///
+/// # Errors:
+/// - Returns an error if the PCM device cannot be opened, if the hardware parameters cannot be set,
+///   or if there is a mismatch between the requested and actual sample rate.
 pub fn init(opts: DeviceOptions) !Device {
     var pcm_handle: ?*c_alsa.snd_pcm_t = null;
     var params: ?*c_alsa.snd_pcm_hw_params_t = null;
@@ -238,6 +276,27 @@ pub fn init(opts: DeviceOptions) !Device {
     };
 }
 
+/// Prepares the ALSA device for playback or capture using the specified strategy.
+///
+/// This function configures the software parameters of the ALSA device, including the
+/// method by which audio data will be transferred to or from the hardware.
+///
+/// # Parameters:
+///
+/// - `strategy`: Specifies the data transfer strategy to be used.
+///   - `Strategy.period_event`:
+///     - Sets `avail_min` to the hardware buffer size and enables period events. This
+///       causes the ALSA hardware to trigger an interrupt after each period is processed,
+///       reducing CPU usage.
+///   - `Strategy.min_available`:
+///     - Sets `avail_min` to the size of the period buffer, meaning the application will
+///       handle data transfer when there is enough space in the buffer for a full period.
+///
+/// # Errors:
+///
+/// Returns an error if any of the ALSA API calls fail, including memory allocation for
+/// software parameters, setting the current software parameters, or preparing the device
+/// for playback/capture.
 pub fn prepare(self: *Device, strategy: Strategy) !void {
     var err = c_alsa.snd_pcm_sw_params_malloc(&self.sw_params);
 

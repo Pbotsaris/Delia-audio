@@ -3,9 +3,13 @@ pub const AlsaError = error{
     device_deinit,
     device_list,
     device_prepare,
-    device_timeout,
-    device_xrun,
+    device_start,
     device_unexpected,
+
+    xrun,
+    suspended,
+    unexpected,
+    timeout,
 
     card_not_found,
     card_out_of_bounds,

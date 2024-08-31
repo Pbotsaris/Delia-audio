@@ -119,3 +119,32 @@ pub fn manuallyInitializingDevice() void {
         std.debug.print("Failed to prepare device: {}", .{err});
     };
 }
+
+fn callback(data: *[]u8) void {
+    // do something with the data
+    @memset(data.*, 0);
+}
+
+pub fn startPlayback() void {
+    //    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    //    defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
+    //
+    //    const allocator = gpa.allocator();
+    //
+    const device = alsa.Device.init(.{
+        .sample_rate = .sr_44Khz,
+        .channels = .stereo,
+        .audio_format = .signed_16bits_little_endian,
+        .stream_type = .playback,
+        .ident = "hw:0,0",
+    }) catch |err| {
+        std.debug.print("Failed to init device: {}", .{err});
+        return;
+    };
+
+    var context = alsa.Context.init(device, callback);
+
+    context.start() catch |err| {
+        std.debug.print("Failed to start context: {}", .{err});
+    };
+}

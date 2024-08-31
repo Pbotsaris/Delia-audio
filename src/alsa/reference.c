@@ -548,9 +548,9 @@ static int async_direct_loop(snd_pcm_t *handle,
  
     data.samples = NULL;    /* we do not require the global sample area for direct write */
     data.areas = NULL;  /* we do not require the global areas for direct write */
-    data.phase = 0;
     err = snd_async_add_pcm_handler(&ahandler, handle, async_direct_callback, &data);
     if (err < 0) {
+       data.phase = 0;
         printf("Unable to register async handler\n");
         exit(EXIT_FAILURE);
     }
@@ -620,6 +620,7 @@ static int direct_loop(snd_pcm_t *handle,
                 return err;
             }
         }
+
         avail = snd_pcm_avail_update(handle);
         if (avail < 0) {
             err = xrun_recovery(handle, avail);
@@ -650,6 +651,7 @@ static int direct_loop(snd_pcm_t *handle,
             }
             continue;
         }
+
         size = period_size;
         while (size > 0) {
             frames = size;
