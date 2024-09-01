@@ -22,6 +22,12 @@ const c_alsa = @cImport({
 
 const Hardware = @This();
 
+const HardwareError = error{
+    cards_out_of_bounds,
+    card_not_found,
+    invalid_identifier,
+};
+
 /// A list of audio cards detected on the system.
 cards: std.ArrayList(AudioCard),
 /// Index of the currently selected audio card.
@@ -59,9 +65,9 @@ pub fn deinit(self: *Hardware) void {
 /// - `at`: The index of the audio card.
 /// - Returns: The `AudioCard` at the specified index.
 /// - Errors: Returns an error if the index is out of bounds.
-pub fn getAudioCardAt(self: Hardware, at: usize) !AudioCard {
+pub fn getAudioCardAt(self: Hardware, at: usize) HardwareError!AudioCard {
     if (at >= self.cards.items.len) {
-        return AlsaError.card_out_of_bounds;
+        return HardwareError.cards_out_of_bounds;
     }
 
     return self.cards.items[at];
@@ -72,7 +78,7 @@ pub fn getAudioCardAt(self: Hardware, at: usize) !AudioCard {
 /// - `ident`: The identifier string of the audio card.
 /// - Returns: The `AudioCard` with the specified identifier.
 /// - Errors: Returns an error if the identifier is invalid or if no matching card is found.
-pub fn getAudioCardByIdent(self: Hardware, ident: []const u8) !AudioCard {
+pub fn getAudioCardByIdent(self: Hardware, ident: []const u8) HardwareError!AudioCard {
     try validateIdentifier(ident);
 
     for (self.cards.items) |card| {
@@ -81,7 +87,7 @@ pub fn getAudioCardByIdent(self: Hardware, ident: []const u8) !AudioCard {
         }
     }
 
-    return AlsaError.card_not_found;
+    return HardwareError.cards_out_of_bounds;
 }
 
 /// Selects an audio card by its index.
@@ -90,7 +96,7 @@ pub fn getAudioCardByIdent(self: Hardware, ident: []const u8) !AudioCard {
 /// - Errors: Returns an error if the index is out of bounds.
 pub fn selectAudioCardAt(self: *Hardware, at: usize) !void {
     if (at >= self.cards.items.len) {
-        return AlsaError.card_out_of_bounds;
+        return HardwareError.cards_out_of_bounds;
     }
 
     self.selected_card = at;
@@ -100,7 +106,7 @@ pub fn selectAudioCardAt(self: *Hardware, at: usize) !void {
 ///
 /// - `ident`: The identifier string of the audio card to select.
 /// - Errors: Returns an error if the identifier is invalid or if no matching card is found.
-pub fn selectAudioCardByIdent(self: *Hardware, ident: []const u8) !void {
+pub fn selectAudioCardByIdent(self: *Hardware, ident: []const u8) HardwareError!void {
     try validateIdentifier(ident);
 
     for (0.., self.cards.items) |i, card| {
@@ -110,7 +116,7 @@ pub fn selectAudioCardByIdent(self: *Hardware, ident: []const u8) !void {
         }
     }
 
-    return AlsaError.card_not_found;
+    return HardwareError.card_not_found;
 }
 
 /// Selects an audio port on the selected audio card by its index.
@@ -130,8 +136,8 @@ pub fn selectAudioPortAt(self: *Hardware, stream_type: StreamType, at: usize) !v
 
     if (at >= ports.items.len) {
         return switch (stream_type) {
-            StreamType.capture => AlsaError.capture_out_of_bounds,
-            StreamType.playback => AlsaError.playback_out_of_bounds,
+            StreamType.capture => AudioCard.CardError.capture_out_of_bounds,
+            StreamType.playback => AudioCard.CardError.playback_out_of_bounds,
         };
     }
 
@@ -157,7 +163,7 @@ pub fn selectAudioPortByIdent(self: *Hardware, stream_type: StreamType, ident: [
 ///
 /// - Returns: The currently selected `AudioCard`.
 /// - Errors: Returns an error if no cards are available.
-pub fn getSelectedAudioCard(self: Hardware) !AudioCard {
+pub fn getSelectedAudioCard(self: Hardware) HardwareError!AudioCard {
     try errWhenEmpty(self.cards.items.len);
     return self.cards.items[self.selected_card];
 }
@@ -172,10 +178,10 @@ pub fn getSelectedAudioPort(self: Hardware) !AudioCard.AudioCardInfo {
     const card = self.cards.items[self.selected_card];
 
     if (self.selected_stream_type == StreamType.playback) {
-        return card.getPlaybackAt(self.selected_port);
+        return try card.getPlaybackAt(self.selected_port);
     }
 
-    return card.getCaptureAt(self.selected_port);
+    return try card.getCaptureAt(self.selected_port);
 }
 
 /// Sets the number of channels for the selected audio port.
@@ -226,13 +232,13 @@ pub fn format(self: Hardware, comptime fmt: []const u8, options: std.fmt.FormatO
 
 // Private
 
-fn validateIdentifier(ident: []const u8) !void {
+fn validateIdentifier(ident: []const u8) HardwareError!void {
     if (ident.len == 0) {
-        return AlsaError.invalid_identifier;
+        return HardwareError.invalid_identifier;
     }
 
     if (ident.len < 3 or !std.mem.eql(u8, ident[0..2], "hw")) {
-        return AlsaError.invalid_identifier;
+        return HardwareError.invalid_identifier;
     }
 }
 
@@ -273,7 +279,7 @@ fn loadSystemCards(self: *Hardware) !void {
         }
 
         const card_details = try AudioCard.AudioCardInfo.init(self.allocator, .{ .card = card, .device = -1 }, c_alsa.snd_ctl_card_info_get_id(info), c_alsa.snd_ctl_card_info_get_name(info));
-        var alsa_card = try AudioCard.init(self.allocator, card_details);
+        var alsa_card = AudioCard.init(self.allocator, card_details);
 
         alsa_card = (try getCard(&alsa_card, ctl, StreamType.playback)).*;
         alsa_card = (try getCard(&alsa_card, ctl, StreamType.capture)).*;
@@ -321,9 +327,9 @@ fn getCard(card: *AudioCard, ctl: ?*c_alsa.snd_ctl_t, stream_type: StreamType) !
     return card;
 }
 
-fn errWhenEmpty(len: usize) !void {
+fn errWhenEmpty(len: usize) HardwareError!void {
     if (len == 0) {
         log.err("Hardware: No cards available", .{});
-        return AlsaError.card_not_found;
+        return HardwareError.card_not_found;
     }
 }

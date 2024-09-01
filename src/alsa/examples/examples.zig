@@ -43,7 +43,6 @@ pub fn usingHardwareToInitDevice() void {
     hardware.setSelectedSampleRate(.sr_44Khz) catch |err| {
         std.debug.print("Sample rate settings not supported: {}", .{err});
     };
-
     // now you can initialize the device knowing that your settings are supported
     //  The hardware object will provide the basic info to initialize the device
     //  but it is possible to configure the device with more options.
@@ -121,16 +120,11 @@ pub fn manuallyInitializingDevice() void {
 }
 
 fn callback(data: *[]u8) void {
-    // do something with the data
+    std.debug.print("callback: data.len = {d}", .{data.len});
     @memset(data.*, 0);
 }
 
 pub fn startPlayback() void {
-    //    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    //    defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
-    //
-    //    const allocator = gpa.allocator();
-    //
     const device = alsa.Device.init(.{
         .sample_rate = .sr_44Khz,
         .channels = .stereo,
@@ -142,9 +136,11 @@ pub fn startPlayback() void {
         return;
     };
 
-    var context = alsa.Context.init(device, callback);
+    _ = device;
 
-    context.start() catch |err| {
-        std.debug.print("Failed to start context: {}", .{err});
-    };
+    //    var cb = alsa.AudioCallback.init(device, callback);
+    //
+    //    cb.start() catch |err| {
+    //        std.debug.print("Failed to start context: {}", .{err});
+    //    };
 }

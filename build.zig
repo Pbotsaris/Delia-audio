@@ -55,13 +55,13 @@ pub fn build(b: *std.Build) void {
     /////// TESTS
 
     // step for running unit tests
-    const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+    //   const lib_unit_tests = b.addTest(.{
+    //       .root_source_file = b.path("src/root.zig"),
+    //       .target = target,
+    //       .optimize = optimize,
+    //   });
 
-    const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
+    //   const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const exe_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
@@ -69,13 +69,24 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // const exe_alsa_unit_tests = b.addTest(.{
+    //     .root_source_file = b.path("src/alsa/settings.zig"),
+    //     .target = target,
+    //     .optimize = optimize,
+    // });
+
     exe_unit_tests.linkLibC();
     exe_unit_tests.linkSystemLibrary("asound");
 
+    //  exe_alsa_unit_tests.linkLibC();
+    // exe_alsa_unit_tests.linkSystemLibrary("asound");
+
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
+    // const run_alsa_exe_unit_tests = b.addRunArtifact(exe_alsa_unit_tests);
 
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_lib_unit_tests.step);
+    //  test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
+    //test_step.dependOn(&run_alsa_exe_unit_tests.step);
 }

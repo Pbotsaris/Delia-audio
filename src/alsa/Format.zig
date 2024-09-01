@@ -3,6 +3,7 @@ const std = @import("std");
 pub const FormatType = @import("settings.zig").FormatType;
 pub const Signedness = @import("settings.zig").Signedness;
 pub const ByteOrder = @import("settings.zig").ByteOrder;
+pub const SampleType = @import("settings.zig").SampleType;
 const AlsaError = @import("error.zig").AlsaError;
 
 const c_alsa = @cImport({
@@ -26,6 +27,8 @@ byte_rate: i32,
 physical_width: i32,
 // same as byte_rate but for physical width. Negative if not applicable
 physical_byte_rate: i32,
+// The sample type and size e.g. I8, U16, etc.
+sample_type: SampleType,
 
 pub fn init(fmt: FormatType) Format {
     const int_fmt = @intFromEnum(fmt);
@@ -46,6 +49,7 @@ pub fn init(fmt: FormatType) Format {
         .byte_rate = if (bit_depth >= 0) @divFloor(bit_depth, 8) else -1,
         .physical_byte_rate = if (physical_width >= 0) @divFloor(physical_width, 8) else -1,
         .physical_width = bit_depth,
+        .sample_type = fmt.toSampleType(),
     };
 }
 
@@ -59,5 +63,6 @@ pub fn format(self: Format, comptime fmt: []const u8, options: std.fmt.FormatOpt
     try writer.print("  ├── byte_rate:          {d}\n", .{self.byte_rate});
     try writer.print("  ├── bit_depth:          {d}\n", .{self.bit_depth});
     try writer.print("  ├── physical_width:     {d}\n", .{self.physical_width});
-    try writer.print("  └─  physical_byte_rate: {d}\n", .{self.physical_byte_rate});
+    try writer.print("  ├── physical_byte_rate: {d}\n", .{self.physical_byte_rate});
+    try writer.print("  └─  sample_type:        {s}\n", .{@tagName(self.sample_type)});
 }

@@ -16,9 +16,6 @@ const SupportedSettings = @This();
 formats: std.ArrayList(FormatType),
 sample_rates: std.ArrayList(SampleRate),
 channel_counts: std.ArrayList(Channels),
-selected_format: ?FormatType = null,
-selected_sample_rate: ?SampleRate = null,
-selected_channel_count: ?Channels = null,
 
 pub fn init(allocator: std.mem.Allocator, hw_identifier: [:0]const u8, stream_type: StreamType) ?SupportedSettings {
     var params: ?*c_alsa.snd_pcm_hw_params_t = null;
@@ -35,7 +32,7 @@ pub fn init(allocator: std.mem.Allocator, hw_identifier: [:0]const u8, stream_ty
     err = c_alsa.snd_pcm_open(&pcm_handle, hw_identifier, @intFromEnum(stream_type), 0);
 
     defer {
-        if (c_alsa.snd_pcm_close(pcm_handle) < 0) {
+        if (pcm_handle != null and c_alsa.snd_pcm_close(pcm_handle) < 0) {
             log.warn("SupportedFormats: Failed to close PCM for StreamType {s}", .{@tagName(stream_type)});
         }
     }

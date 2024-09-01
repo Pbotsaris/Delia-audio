@@ -9,8 +9,11 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    //examples.usingHardwareToInitDevice();
-    //examples.manuallyInitializingDevice();
+    //   examples.usingHardwareToInitDevice();
+    examples.manuallyInitializingDevice();
+    // examples.startPlayback();
+}
 
-    examples.startPlayback();
+test {
+    std.testing.refAllDeclsRecursive(alsa);
 }

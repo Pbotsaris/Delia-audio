@@ -925,4 +925,4 @@ int main(int argc, char *argv[])
     free(samples);
     snd_pcm_close(handle);
     return 0;
-}
+frames_actually_transfered}

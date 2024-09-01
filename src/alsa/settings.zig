@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const c_alsa = @cImport({
     @cInclude("alsa/asoundlib.h");
 });
@@ -93,15 +95,15 @@ pub const AccessType = enum(c_uint) {
 
 pub const Mode = enum(c_int) {
     none = 0,
-    //  opens in non-blocking mode: calls to read/write audio data will return immediately
+    ///  opens in non-blocking mode: calls to read/write audio data will return immediately
     nonblock = c_alsa.SND_PCM_NONBLOCK,
-    // async for when handling audio I/O asynchronously
+    /// async for when handling audio I/O asynchronously
     async_mode = c_alsa.SND_PCM_ASYNC,
-    // prevents automatic resampling when sample rate doesn't match hardware
+    /// prevents automatic resampling when sample rate doesn't match hardware
     no_resample = c_alsa.SND_PCM_NO_AUTO_RESAMPLE,
-    // prevents from automatically ajudisting the number of channel
+    /// prevents from automatically ajudisting the number of channel
     no_autochannel = c_alsa.SND_PCM_NO_AUTO_CHANNELS,
-    // prevents from automatically ajusting the sample format
+    /// prevents from automatically ajusting the sample format
     no_autoformat = c_alsa.SND_PCM_NO_AUTO_FORMAT,
 };
 
@@ -113,6 +115,64 @@ pub const Signedness = enum(u32) {
 pub const ByteOrder = enum(u32) {
     little_endian,
     big_endian,
+};
+
+/// The `SampleType` enum defines the possible data types for audio samples in the audio engine.
+// This enum is essential because the exact format of audio samples is determined at runtime
+// based on the configuration provided by the ALSA API. As such, type checks are required at runtime
+// to ensure the correct handling of audio buffers, preventing data corruption and undefined behavior.
+pub const SampleType = enum(u32) {
+    t_i8,
+    t_u8,
+    t_i16,
+    t_u16,
+    t_i20,
+    t_u20,
+    t_i24,
+    t_u24,
+    t_i32,
+    t_u32,
+    t_f32,
+    t_f64,
+    t_u8_3, // 3 bytes per sample
+    t_u8_C, // compressed format will need decoding
+
+    /// Checks if the provided type `T` matches the expected `SampleType`.
+    ///
+    /// This function is used to validate that the actual data type being processed
+    /// corresponds to the `SampleType` that was determined at runtime.
+    ///
+    /// # Parameters
+    /// - `T`: The type to be checked against the `SampleType`.
+    ///
+    /// # Returns
+    /// - `true` if `T` matches the expected `SampleType`.
+    /// - `false` otherwise.
+    ///
+    /// # Example
+    /// ```
+    /// const sample_type = SampleType.t_i16;
+    /// assert(sample_type.isValidType(i16) == true);
+    /// assert(sample_type.isValidType(u8) == false);
+    /// ```
+    pub fn isValidType(self: SampleType, T: type) bool {
+        return switch (T) {
+            u8 => return self == .t_u8 or self == .t_u8_C,
+            i8 => return self == .t_i8,
+            u16 => return self == .t_u16,
+            i16 => return self == .t_i16,
+            u20 => return self == .t_u20,
+            i20 => return self == .t_i20,
+            u24 => return self == .t_u24,
+            i24 => return self == .t_i24,
+            u32 => return self == .t_u32,
+            i32 => return self == .t_i32,
+            f32 => return self == .t_f32,
+            f64 => return self == .t_f64,
+            [3]u8 => return self == .t_u8_3,
+            else => false,
+        };
+    }
 };
 
 pub const FormatType = enum(c_int) {
@@ -164,7 +224,7 @@ pub const FormatType = enum(c_int) {
     unsigned_24bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U24_3BE,
 
     // 20-bit packed formats (3 bytes per sample)
-    signed_20bits_packed3_little_endianendian = c_alsa.SND_PCM_FORMAT_S20_3LE,
+    signed_20bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_S20_3LE,
     signed_20bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S20_3BE,
     unsigned_20bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U20_3LE,
     unsigned_20bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U20_3BE,
@@ -187,7 +247,7 @@ pub const FormatType = enum(c_int) {
     iec958_subframe_little_endian = c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_LE,
     iec958_subframe_big_endian = c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_BE,
 
-    // Note in use
+    // Not in use
     //
     // G.723 ADPCM formats
     // G.723 is a codec used for voice compression, especially in telephony
@@ -208,11 +268,11 @@ pub const FormatType = enum(c_int) {
     // dsd_u32_big_endian = c_alsa.SND_PCM_FORMAT_DSD_U32_BE,
     /////////////////////////////////////////////////////////////
 
-    // Special format
+    // Special format - Not in use
     // This is a catch-all for formats that don't fit into the standard categories, used for custom or non-standard formats
     // special = c_alsa.SND_PCM_FORMAT_SPECIAL,
 
-    ////////// same as the little endian counterparts ///////////
+    ////////// these types are redudant -  they are little endian as above  ///////////
     // signed_16bits = c_alsa.SND_PCM_FORMAT_S16,
     // unsigned_16bits = c_alsa.SND_PCM_FORMAT_U16,
     // signed_24bits = c_alsa.SND_PCM_FORMAT_S24,
@@ -226,29 +286,43 @@ pub const FormatType = enum(c_int) {
     // iec958_subframe = c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME,
     ///////////////////////////////////////////
 
-    pub fn ToType(self: FormatType) type {
+    /// Maps a `FormatType` to the corresponding `SampleType`.
+    ///
+    /// This function converts an ALSA `FormatType` into the appropriate `SampleType` for handling
+    /// audio data. The conversion accounts for various audio formats, including different bit depths,
+    /// signedness, and byte orders.
+    ///
+    /// - Returns the matching `SampleType` for the given `FormatType`.
+    /// - Handles special cases like packed formats and compressed formats.
+    ///
+    /// Example:
+    /// ```
+    /// const sample_type = FormatType.signed_16bits_little_endian.toSampleType();
+    /// assert(sample_type == SampleType.t_i16);
+    /// ```
+    pub fn toSampleType(self: FormatType) SampleType {
         return switch (self) {
-            .signed_8bits => i8,
-            .unsigned_8bits => u8,
+            .signed_8bits => .t_i8,
+            .unsigned_8bits => .t_u8,
 
-            .signed_16bits_little_endian, .signed_16bits_big_endian => i16,
-            .unsigned_16bits_little_endian, .unsigned_16bits_big_endian => u16,
+            .signed_16bits_little_endian, .signed_16bits_big_endian => .t_i16,
+            .unsigned_16bits_little_endian, .unsigned_16bits_big_endian => .t_u16,
 
             // NOTE: that Alsa uses 32 word packed in 4bytesm with the lower 20 bits used
             // The data is LSB justified, meaning the data is packed towards the least significant bit
-            .signed_20bits_little_endian, .signed_20bits_big_endian => i20,
-            .unsigned_20bits_little_endian, .unsigned_20bits_big_endian => u20,
+            .signed_20bits_little_endian, .signed_20bits_big_endian => .t_i20,
+            .unsigned_20bits_little_endian, .unsigned_20bits_big_endian => .t_u20,
 
             // NOTE: that in ALSA this uses 32bits words using the bottom 3 bytes
-            .signed_24bits_little_endian, .signed_24bits_big_endian => i24,
-            .unsigned_24bits_little_endian, .unsigned_24bits_big_endian => u24,
+            .signed_24bits_little_endian, .signed_24bits_big_endian => .t_i24,
+            .unsigned_24bits_little_endian, .unsigned_24bits_big_endian => .t_u24,
 
-            .signed_32bits_little_endian, .signed_32bits_big_endian => i32,
-            .unsigned_32bits_little_endian, .unsigned_32bits_big_endian => u32,
+            .signed_32bits_little_endian, .signed_32bits_big_endian => .t_i32,
+            .unsigned_32bits_little_endian, .unsigned_32bits_big_endian => .t_u32,
 
             // ranges from -1.0 to 1.0
-            .float_32bits_little_endian, .float_32bits_big_endian => f32,
-            .float64_little_endian, .float64_big_endian => f64,
+            .float_32bits_little_endian, .float_32bits_big_endian => .t_f32,
+            .float64_little_endian, .float64_big_endian => .t_f64,
 
             .signed_24bits_packed3_little_endian,
             .signed_24bits_packed3_big_endian,
@@ -262,15 +336,15 @@ pub const FormatType = enum(c_int) {
             .signed_18bits_packed3_big_endian,
             .unsigned_18bits_packed3_little_endian,
             .unsigned_18bits_packed3_big_endian,
-            => [3]u8,
+            => .t_u8_3,
 
             // Generally 32bits with audio in 16, 20, 24 bits
             // and the remaining bits is used for syncronization
-            .iec958_subframe_little_endian, .iec958_subframe_big_endian => u32,
+            .iec958_subframe_little_endian, .iec958_subframe_big_endian => .t_u32,
 
             // Compressed formats
             // will need decoding logic
-            else => u8,
+            else => .t_u8_C,
         };
     }
 };
@@ -310,3 +384,187 @@ pub const channel_counts: [@typeInfo(ChannelCount).Enum.fields.len]u32 = blk: {
 
     break :blk temp;
 };
+
+const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
+
+test "StreamType values match ALSA constants" {
+    try expectEqual(c_alsa.SND_PCM_STREAM_PLAYBACK, @intFromEnum(StreamType.playback));
+    try expectEqual(c_alsa.SND_PCM_STREAM_CAPTURE, @intFromEnum(StreamType.capture));
+}
+
+test "AccessType values match ALSA constants" {
+    try expectEqual(c_alsa.SND_PCM_ACCESS_RW_INTERLEAVED, @intFromEnum(AccessType.rw_interleaved));
+    try expectEqual(c_alsa.SND_PCM_ACCESS_MMAP_NONINTERLEAVED, @intFromEnum(AccessType.mmap_noninterleaved));
+}
+
+test "SampleType.isValidType works correctly" {
+    try expect(SampleType.t_i8.isValidType(i8));
+    try expect(SampleType.t_u8.isValidType(u8));
+    try expect(SampleType.t_u8_C.isValidType(u8));
+    try expect(SampleType.t_i16.isValidType(i16));
+    try expect(SampleType.t_u16.isValidType(u16));
+    try expect(SampleType.t_i20.isValidType(i20));
+    try expect(SampleType.t_u20.isValidType(u20));
+    try expect(SampleType.t_i24.isValidType(i24));
+    try expect(SampleType.t_u24.isValidType(u24));
+    try expect(SampleType.t_i32.isValidType(i32));
+    try expect(SampleType.t_u32.isValidType(u32));
+    try expect(SampleType.t_f32.isValidType(f32));
+    try expect(SampleType.t_f64.isValidType(f64));
+    try expect(SampleType.t_u8_3.isValidType([3]u8));
+    try expect(!SampleType.t_i8.isValidType(u8));
+    try expect(!SampleType.t_u8.isValidType(i8));
+    try expect(!SampleType.t_u8_C.isValidType(i8));
+    try expect(!SampleType.t_i16.isValidType(u16));
+    try expect(!SampleType.t_u16.isValidType(i16));
+    try expect(!SampleType.t_i20.isValidType(u20));
+    try expect(!SampleType.t_u20.isValidType(i20));
+    try expect(!SampleType.t_i24.isValidType(u24));
+    try expect(!SampleType.t_u24.isValidType(i24));
+    try expect(!SampleType.t_i32.isValidType(u32));
+    try expect(!SampleType.t_u32.isValidType(i32));
+    try expect(!SampleType.t_f32.isValidType(f64));
+    try expect(!SampleType.t_f64.isValidType(f32));
+    try expect(!SampleType.t_u8_3.isValidType([4]u8));
+}
+
+test "FormatType.toSampleType works correctly" {
+    // 8-bit integer formats
+    try expectEqual(SampleType.t_i8, FormatType.signed_8bits.toSampleType());
+    try expectEqual(SampleType.t_u8, FormatType.unsigned_8bits.toSampleType());
+
+    // 16-bit integer formats
+    try expectEqual(SampleType.t_i16, FormatType.signed_16bits_little_endian.toSampleType());
+    try expectEqual(SampleType.t_i16, FormatType.signed_16bits_big_endian.toSampleType());
+    try expectEqual(SampleType.t_u16, FormatType.unsigned_16bits_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u16, FormatType.unsigned_16bits_big_endian.toSampleType());
+
+    // 20-bit integer formats
+    try expectEqual(SampleType.t_i20, FormatType.signed_20bits_little_endian.toSampleType());
+    try expectEqual(SampleType.t_i20, FormatType.signed_20bits_big_endian.toSampleType());
+    try expectEqual(SampleType.t_u20, FormatType.unsigned_20bits_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u20, FormatType.unsigned_20bits_big_endian.toSampleType());
+
+    // 24-bit integer formats
+    try expectEqual(SampleType.t_i24, FormatType.signed_24bits_little_endian.toSampleType());
+    try expectEqual(SampleType.t_i24, FormatType.signed_24bits_big_endian.toSampleType());
+    try expectEqual(SampleType.t_u24, FormatType.unsigned_24bits_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u24, FormatType.unsigned_24bits_big_endian.toSampleType());
+
+    // 32-bit integer formats
+    try expectEqual(SampleType.t_i32, FormatType.signed_32bits_little_endian.toSampleType());
+    try expectEqual(SampleType.t_i32, FormatType.signed_32bits_big_endian.toSampleType());
+    try expectEqual(SampleType.t_u32, FormatType.unsigned_32bits_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u32, FormatType.unsigned_32bits_big_endian.toSampleType());
+
+    // 32-bit floating-point formats
+    try expectEqual(SampleType.t_f32, FormatType.float_32bits_little_endian.toSampleType());
+    try expectEqual(SampleType.t_f32, FormatType.float_32bits_big_endian.toSampleType());
+
+    // 64-bit floating-point formats
+    try expectEqual(SampleType.t_f64, FormatType.float64_little_endian.toSampleType());
+    try expectEqual(SampleType.t_f64, FormatType.float64_big_endian.toSampleType());
+
+    // 24-bit packed formats (3 bytes per sample)
+    try expectEqual(SampleType.t_u8_3, FormatType.signed_24bits_packed3_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u8_3, FormatType.signed_24bits_packed3_big_endian.toSampleType());
+    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_24bits_packed3_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_24bits_packed3_big_endian.toSampleType());
+
+    // 20-bit packed formats (3 bytes per sample)
+    try expectEqual(SampleType.t_u8_3, FormatType.signed_20bits_packed3_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u8_3, FormatType.signed_20bits_packed3_big_endian.toSampleType());
+    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_20bits_packed3_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_20bits_packed3_big_endian.toSampleType());
+
+    // 18-bit packed formats (3 bytes per sample)
+    try expectEqual(SampleType.t_u8_3, FormatType.signed_18bits_packed3_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u8_3, FormatType.signed_18bits_packed3_big_endian.toSampleType());
+    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_18bits_packed3_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_18bits_packed3_big_endian.toSampleType());
+
+    // IEC 958 subframe formats
+    try expectEqual(SampleType.t_u32, FormatType.iec958_subframe_little_endian.toSampleType());
+    try expectEqual(SampleType.t_u32, FormatType.iec958_subframe_big_endian.toSampleType());
+
+    // Compressed formats
+    try expectEqual(SampleType.t_u8_C, FormatType.mu_law.toSampleType());
+    try expectEqual(SampleType.t_u8_C, FormatType.a_law.toSampleType());
+    try expectEqual(SampleType.t_u8_C, FormatType.ima_adpcm.toSampleType());
+    try expectEqual(SampleType.t_u8_C, FormatType.mpeg.toSampleType());
+    try expectEqual(SampleType.t_u8_C, FormatType.gsm.toSampleType());
+}
+
+test "formats array contains correct values" {
+    try expectEqual(c_alsa.SND_PCM_FORMAT_UNKNOWN, formats[0]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S8, formats[1]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U8, formats[2]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S16_LE, formats[3]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S16_BE, formats[4]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U16_LE, formats[5]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U16_BE, formats[6]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_LE, formats[7]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_BE, formats[8]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_LE, formats[9]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_BE, formats[10]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_LE, formats[11]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_BE, formats[12]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_LE, formats[13]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_BE, formats[14]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S32_LE, formats[15]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S32_BE, formats[16]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U32_LE, formats[17]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U32_BE, formats[18]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT_LE, formats[19]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT_BE, formats[20]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT64_LE, formats[21]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT64_BE, formats[22]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_3LE, formats[23]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_3BE, formats[24]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_3LE, formats[25]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_3BE, formats[26]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_3LE, formats[27]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_3BE, formats[28]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_3LE, formats[29]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_3BE, formats[30]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S18_3LE, formats[31]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S18_3BE, formats[32]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U18_3LE, formats[33]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U18_3BE, formats[34]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_MU_LAW, formats[35]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_A_LAW, formats[36]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_IMA_ADPCM, formats[37]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_MPEG, formats[38]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_GSM, formats[39]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_LE, formats[40]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_BE, formats[41]);
+}
+
+test "sample_rates array contains correct values" {
+    try expectEqual(8000, sample_rates[0]);
+    try expectEqual(11025, sample_rates[1]);
+    try expectEqual(16000, sample_rates[2]);
+    try expectEqual(22050, sample_rates[3]);
+    try expectEqual(32000, sample_rates[4]);
+    try expectEqual(37800, sample_rates[5]);
+    try expectEqual(44056, sample_rates[6]);
+    try expectEqual(44100, sample_rates[7]);
+    try expectEqual(50000, sample_rates[8]);
+    try expectEqual(50400, sample_rates[9]);
+    try expectEqual(64000, sample_rates[10]);
+    try expectEqual(48000, sample_rates[11]);
+    try expectEqual(82000, sample_rates[12]);
+    try expectEqual(96000, sample_rates[13]);
+    try expectEqual(176400, sample_rates[14]);
+    try expectEqual(192000, sample_rates[15]);
+    try expectEqual(352800, sample_rates[16]);
+}
+
+test "channel_counts array contains correct values" {
+    try expectEqual(1, channel_counts[0]);
+    try expectEqual(2, channel_counts[1]);
+    try expectEqual(4, channel_counts[2]);
+    try expectEqual(6, channel_counts[3]);
+    try expectEqual(8, channel_counts[4]);
+}

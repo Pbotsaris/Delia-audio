@@ -6,7 +6,7 @@ const c_alsa = @cImport({
     @cInclude("alsa/asoundlib.h");
 });
 
-const Context = @This();
+const AudioCallback = @This();
 
 const log = std.log.scoped(.alsa);
 
@@ -17,14 +17,16 @@ device: Device,
 running: bool = false,
 callback: *const fn (*[]u8) void,
 
-pub fn init(device: Device, callback: *const fn (*[]u8) void) Context {
+pub fn init(device: Device, callback: *const fn (*[]u8) void) AudioCallback {
     return .{
         .device = device,
         .callback = callback,
     };
 }
 
-fn xrunRecovery(self: *Context, err: AlsaError) !void {
+fn xrunRecovery(self: *AudioCallback, c_err: c_int) !void {
+    const err = if (c_err == -c_alsa.EPIPE) AlsaError.xrun else AlsaError.suspended;
+
     const needs_prepare = switch (err) {
         AlsaError.xrun => true,
 
@@ -63,12 +65,12 @@ fn xrunRecovery(self: *Context, err: AlsaError) !void {
     }
 }
 
-pub fn start(self: *Context) !void {
+pub fn start(self: *AudioCallback) !void {
     self.running = true;
     try self.directWrite();
 }
 
-fn directWrite(self: *Context) !void {
+fn directWrite(self: *AudioCallback) !void {
     const buffer_size: c_alsa.snd_pcm_uframes_t = @intFromEnum(self.device.buffer_size);
     var areas: ?*c_alsa.snd_pcm_channel_area_t = null;
     var stopped: bool = true;
@@ -80,10 +82,10 @@ fn directWrite(self: *Context) !void {
 
         switch (state) {
             c_alsa.SND_PCM_STATE_XRUN => {
-                try self.xrunRecovery(AlsaError.xrun);
+                try self.xrunRecovery(-c_alsa.EPIPE);
                 stopped = true;
             },
-            c_alsa.SND_PCM_STATE_SUSPENDED => try self.xrunRecovery(AlsaError.suspended),
+            c_alsa.SND_PCM_STATE_SUSPENDED => try self.xrunRecovery(-c_alsa.ESTRPIPE),
 
             else => {
                 if (state < 0) {
@@ -96,8 +98,7 @@ fn directWrite(self: *Context) !void {
         const avail = c_alsa.snd_pcm_avail_update(self.device.pcm_handle);
 
         if (avail < 0) {
-            const err = if (avail == -c_alsa.EPIPE) AlsaError.xrun else AlsaError.suspended;
-            try self.xrunRecovery(err);
+            try self.xrunRecovery(@intCast(avail));
             continue;
         }
 
@@ -116,8 +117,7 @@ fn directWrite(self: *Context) !void {
             const err = c_alsa.snd_pcm_wait(self.device.pcm_handle, self.device.timeout);
 
             if (err < 0) {
-                const err2 = if (err == -c_alsa.EPIPE) AlsaError.xrun else AlsaError.suspended;
-                try self.xrunRecovery(err2);
+                try self.xrunRecovery(err);
                 stopped = true;
                 continue;
             }
@@ -135,8 +135,7 @@ fn directWrite(self: *Context) !void {
             const res = c_alsa.snd_pcm_mmap_begin(self.device.pcm_handle, &areas, &offset, &expected_to_transfer);
 
             if (res < 0) {
-                const err = if (res == -c_alsa.EPIPE) AlsaError.xrun else AlsaError.suspended;
-                try self.xrunRecovery(err);
+                try self.xrunRecovery(res);
                 stopped = true;
             }
 
@@ -152,9 +151,8 @@ fn directWrite(self: *Context) !void {
                 c_alsa.snd_pcm_mmap_commit(self.device.pcm_handle, offset, expected_to_transfer);
 
             if (frames_actually_transfered < 0) {
-                const err = if (frames_actually_transfered == -c_alsa.EPIPE) AlsaError.xrun else AlsaError.suspended;
-                try self.xrunRecovery(err);
-            } else if (frames_actually_transfered != expected_to_transfer) try self.xrunRecovery(AlsaError.xrun);
+                try self.xrunRecovery(@intCast(frames_actually_transfered));
+            } else if (frames_actually_transfered != expected_to_transfer) try self.xrunRecovery(-c_alsa.EPIPE);
 
             to_transfer -= @as(c_ulong, @intCast(frames_actually_transfered));
         }

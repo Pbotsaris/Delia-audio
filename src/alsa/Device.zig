@@ -10,7 +10,25 @@
 
 // TODO: Create an Alsa Allocator following the same pattern as STD for memory allocation
 const std = @import("std");
-const AlsaError = @import("error.zig").AlsaError;
+pub const DeviceHardwareError = error{
+    open_stream,
+    alsa_allocation,
+    access_type,
+    audio_format,
+    channel_count,
+    sample_rate,
+    buffer_size,
+    hardware_params,
+};
+
+pub const DeviceSoftwareError = error{
+    software_params,
+    alsa_allocation,
+    set_avail_min,
+    set_start_threshold,
+    set_period_event,
+    prepare,
+};
 
 const c_alsa = @cImport({
     @cInclude("alsa/asoundlib.h");
@@ -153,12 +171,12 @@ pub fn fromHardware(hardware: Hardware, inc_opts: DeviceOptionsFromHardware) !De
 /// # Errors:
 /// - Returns an error if the PCM device cannot be opened, if the hardware parameters cannot be set,
 ///   or if there is a mismatch between the requested and actual sample rate.
-pub fn init(opts: DeviceOptions) !Device {
+pub fn init(opts: DeviceOptions) DeviceHardwareError!Device {
     var pcm_handle: ?*c_alsa.snd_pcm_t = null;
     var params: ?*c_alsa.snd_pcm_hw_params_t = null;
     var sample_rate: u32 = @intFromEnum(opts.sample_rate);
 
-    // we are configuring the hardware to match the sofware buffer size and optimize latency
+    // we are configuring the hardware to match the software buffer size and optimize latency
     var hardware_period_size: c_alsa.snd_pcm_uframes_t = @intFromEnum(opts.buffer_size);
     var hardware_buffer_size: c_alsa.snd_pcm_uframes_t = hardware_period_size * NB_PERIODS;
 
@@ -167,14 +185,14 @@ pub fn init(opts: DeviceOptions) !Device {
     var err = c_alsa.snd_pcm_open(&pcm_handle, opts.ident.ptr, @intFromEnum(opts.stream_type), @intFromEnum(opts.mode));
     if (err < 0) {
         log.err("Failed to open PCM for StreamType: {s}, Mode: {s}: {s}", .{ @tagName(opts.stream_type), @tagName(opts.mode), c_alsa.snd_strerror(err) });
-        return AlsaError.device_init;
+        return DeviceHardwareError.open_stream;
     }
 
     err = c_alsa.snd_pcm_hw_params_malloc(&params);
 
     if (err < 0) {
         log.err("Failed to allocate hardware parameters: {s}", .{c_alsa.snd_strerror(err)});
-        return AlsaError.device_init;
+        return DeviceHardwareError.alsa_allocation;
     }
 
     _ = c_alsa.snd_pcm_hw_params_any(pcm_handle, params);
@@ -189,7 +207,7 @@ pub fn init(opts: DeviceOptions) !Device {
 
     if (err < 0) {
         log.err("Failed to set access type '{s}': {s}", .{ @tagName(opts.access_type), c_alsa.snd_strerror(err) });
-        return AlsaError.device_init;
+        return DeviceHardwareError.access_type;
     }
 
     err = c_alsa.snd_pcm_hw_params_set_format(pcm_handle, params, @intFromEnum(opts.audio_format));
@@ -200,14 +218,14 @@ pub fn init(opts: DeviceOptions) !Device {
             .{@tagName(opts.audio_format)},
         );
         log.err("ALSA error: {s}", .{c_alsa.snd_strerror(err)});
-        return AlsaError.device_init;
+        return DeviceHardwareError.audio_format;
     }
 
     err = c_alsa.snd_pcm_hw_params_set_channels(pcm_handle, params, @intFromEnum(opts.channels));
 
     if (err < 0) {
         log.err("Failed to set channel count of {d}: {s}", .{ @intFromEnum(opts.channels), c_alsa.snd_strerror(err) });
-        return AlsaError.device_init;
+        return DeviceHardwareError.channel_count;
     }
 
     err = c_alsa.snd_pcm_hw_params_set_rate_near(pcm_handle, params, &sample_rate, &dir);
@@ -215,47 +233,47 @@ pub fn init(opts: DeviceOptions) !Device {
 
     if (err < 0) {
         log.err("Failed to set sample rate of {d}: {s}", .{ sample_rate, c_alsa.snd_strerror(err) });
-        return AlsaError.device_init;
+        return DeviceHardwareError.sample_rate;
     }
 
     if (sample_rate != desired_sampe_rate) {
         log.err("Sample rate {d} did not match the requested {d} ", .{ sample_rate, desired_sampe_rate });
-        return AlsaError.device_init;
+        return DeviceHardwareError.sample_rate;
     }
 
     err = c_alsa.snd_pcm_hw_params_set_buffer_size_near(pcm_handle, params, &hardware_buffer_size);
 
     if (err < 0) {
         log.err("Failed to set hardware buffer size {d}: {s}", .{ hardware_period_size, c_alsa.snd_strerror(err) });
-        return AlsaError.device_init;
+        return DeviceHardwareError.buffer_size;
     }
 
     err = c_alsa.snd_pcm_hw_params_set_period_size_near(pcm_handle, params, &hardware_period_size, &dir);
 
     if (err < 0) {
         log.err("Failed to set hardware period size {d}: {s}", .{ hardware_period_size, c_alsa.snd_strerror(err) });
-        return AlsaError.device_init;
+        return DeviceHardwareError.buffer_size;
     }
 
     err = c_alsa.snd_pcm_hw_params(pcm_handle, params);
 
     if (err < 0) {
         log.err("Failed to set hardware parameters: {s}", .{c_alsa.snd_strerror(err)});
-        return AlsaError.device_init;
+        return DeviceHardwareError.hardware_params;
     }
 
     err = c_alsa.snd_pcm_hw_params_get_buffer_size(params, &hardware_buffer_size);
 
     if (err < 0) {
         log.err("Failed to get hardware buffer size: {s}", .{c_alsa.snd_strerror(err)});
-        return AlsaError.device_init;
+        return DeviceHardwareError.buffer_size;
     }
 
     err = c_alsa.snd_pcm_hw_params_get_period_size(params, &hardware_period_size, &dir);
 
     if (err < 0) {
         log.err("Failed to get hardware period size: {s}", .{c_alsa.snd_strerror(err)});
-        return AlsaError.device_init;
+        return DeviceHardwareError.buffer_size;
     }
 
     return Device{
@@ -297,19 +315,19 @@ pub fn init(opts: DeviceOptions) !Device {
 /// Returns an error if any of the ALSA API calls fail, including memory allocation for
 /// software parameters, setting the current software parameters, or preparing the device
 /// for playback/capture.
-pub fn prepare(self: *Device, strategy: Strategy) !void {
+pub fn prepare(self: *Device, strategy: Strategy) DeviceSoftwareError!void {
     var err = c_alsa.snd_pcm_sw_params_malloc(&self.sw_params);
 
     if (err < 0) {
         log.err("Failed to allocate software parameters: {s}", .{c_alsa.snd_strerror(err)});
-        return AlsaError.device_prepare;
+        return DeviceSoftwareError.alsa_allocation;
     }
 
     err = c_alsa.snd_pcm_sw_params_current(self.pcm_handle, self.sw_params);
 
     if (err < 0) {
         log.err("Failed to get current software parameters: {s}", .{c_alsa.snd_strerror(err)});
-        return AlsaError.device_prepare;
+        return DeviceSoftwareError.software_params;
     }
 
     // If we are using period_event strategy, we set the avail_min to the hardware buffer size
@@ -321,20 +339,20 @@ pub fn prepare(self: *Device, strategy: Strategy) !void {
 
     if (err < 0) {
         log.err("Failed to set minimum available count '{s}': {s}", .{ @tagName(self.buffer_size), c_alsa.snd_strerror(err) });
-        return AlsaError.device_prepare;
+        return DeviceSoftwareError.set_avail_min;
     }
 
     err = c_alsa.snd_pcm_sw_params_set_start_threshold(self.pcm_handle, self.sw_params, @intFromEnum(self.start_thresh));
 
     if (err < 0) {
         log.err("Failed to set start threshold '{s}': {s}", .{ @tagName(self.start_thresh), c_alsa.snd_strerror(err) });
-        return AlsaError.device_prepare;
+        return DeviceSoftwareError.set_start_threshold;
     }
 
     if (strategy == Strategy.period_event) {
         if (c_alsa.snd_pcm_sw_params_set_period_event(self.pcm_handle, self.sw_params, 1) < 0) {
             log.err("Failed to enable period event: {s}", .{c_alsa.snd_strerror(err)});
-            return AlsaError.device_prepare;
+            return DeviceSoftwareError.set_period_event;
         }
 
         err = c_alsa.snd_pcm_sw_params(self.pcm_handle, self.sw_params);
@@ -342,14 +360,14 @@ pub fn prepare(self: *Device, strategy: Strategy) !void {
 
     if (err < 0) {
         log.err("Failed to set software parameters: {s}", .{c_alsa.snd_strerror(err)});
-        return AlsaError.device_prepare;
+        return DeviceSoftwareError.software_params;
     }
 
     err = c_alsa.snd_pcm_prepare(self.pcm_handle);
 
     if (err < 0) {
         log.err("Failed to prepare Audio Interface: {s}", .{c_alsa.snd_strerror(err)});
-        return AlsaError.device_init;
+        return DeviceSoftwareError.prepare;
     }
 }
 
@@ -377,6 +395,6 @@ pub fn deinit(self: *Device) !void {
 
     if (res < 0) {
         log.err("Failed to close PCM: {s}", .{c_alsa.snd_strerror(res)});
-        return AlsaError.device_deinit;
+        return DeviceHardwareError.alsa_allocation;
     }
 }

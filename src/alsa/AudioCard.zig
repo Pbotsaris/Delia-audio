@@ -18,6 +18,15 @@ const SupportedSettings = @import("SupportedSettings.zig");
 
 const AudioCard = @This();
 
+pub const CardError = error{
+    playback_not_found,
+    capture_not_found,
+    playback_out_of_bounds,
+    capture_out_of_bounds,
+    invalid_settings,
+    invalid_supported_settings,
+};
+
 const Identifier = struct {
     device: c_int,
     card: c_int,
@@ -101,6 +110,8 @@ pub const AudioCardInfo = struct {
         self.stream_type = stream_type;
 
         const ss = self.supported_settings orelse return;
+
+        // defaults
         if (ss.formats.items.len >= 0) self.selected_settings.format = ss.formats.items[0];
         if (ss.sample_rates.items.len >= 0) self.selected_settings.sample_rate = ss.sample_rates.items[0];
         if (ss.channel_counts.items.len >= 0) self.selected_settings.channels = ss.channel_counts.items[0];
@@ -167,7 +178,7 @@ allocator: std.mem.Allocator,
 /// - `details`: The details of the audio card.
 /// - Returns: An initialized `AudioCard`.
 /// - Errors: Can return errors related to memory allocations.
-pub fn init(allocator: std.mem.Allocator, details: AudioCardInfo) !AudioCard {
+pub fn init(allocator: std.mem.Allocator, details: AudioCardInfo) AudioCard {
     return AudioCard{ //
         .allocator = allocator,
         .details = details,
@@ -207,9 +218,9 @@ pub fn addCapture(self: *AudioCard, index: c_int, id: [*c]const u8, name: [*c]co
 /// - `at`: The index of the playback port to retrieve.
 /// - Returns: The `AudioCardInfo` of the specified playback port.
 /// - Errors: Returns an error if the index is out of bounds.
-pub fn getPlaybackAt(self: AudioCard, at: usize) !AudioCardInfo {
+pub fn getPlaybackAt(self: AudioCard, at: usize) CardError!AudioCardInfo {
     if (at >= self.playbacks.items.len) {
-        return AlsaError.playback_out_of_bounds;
+        return CardError.playback_out_of_bounds;
     }
 
     return self.playbacks.items[at];
@@ -220,9 +231,9 @@ pub fn getPlaybackAt(self: AudioCard, at: usize) !AudioCardInfo {
 /// - `at`: The index of the capture port to retrieve.
 /// - Returns: The `AudioCardInfo` of the specified capture port.
 /// - Errors: Returns an error if the index is out of bounds.
-pub fn getCaptureAt(self: AudioCard, at: usize) !AudioCardInfo {
+pub fn getCaptureAt(self: AudioCard, at: usize) CardError!AudioCardInfo {
     if (at >= self.captures.items.len) {
-        return AlsaError.capture_out_of_bounds;
+        return CardError.capture_out_of_bounds;
     }
 
     return self.captures.items[at];
@@ -233,14 +244,14 @@ pub fn getCaptureAt(self: AudioCard, at: usize) !AudioCardInfo {
 /// - `ident`: The identifier(e.g. `hw:0,1`) string of the playback port.
 /// - Returns: The `AudioCardInfo` of the specified playback port.
 /// - Errors: Returns an error if no matching port is found.
-pub fn getPlaybackByIdent(self: AudioCard, ident: []const u8) !AudioCardInfo {
+pub fn getPlaybackByIdent(self: AudioCard, ident: []const u8) CardError!AudioCardInfo {
     for (self.playbacks.items) |playback| {
         if (std.mem.eql(u8, playback.identifier, ident)) {
             return playback;
         }
     }
 
-    return AlsaError.playback_not_found;
+    return CardError.playback_not_found;
 }
 
 /// Retrieves a capture port by its identifier.
@@ -248,14 +259,14 @@ pub fn getPlaybackByIdent(self: AudioCard, ident: []const u8) !AudioCardInfo {
 /// - `ident`: The identifier (e.g. `hw:0,1`) string of the capture port.
 /// - Returns: The `AudioCardInfo` of the specified capture port.
 /// - Errors: Returns an error if no matching port is found.
-pub fn getCaptureByIdent(self: AudioCard, ident: []const u8) !AudioCardInfo {
+pub fn getCaptureByIdent(self: AudioCard, ident: []const u8) CardError!AudioCardInfo {
     for (self.captures.items) |capture| {
         if (std.mem.eql(u8, capture.identifier, ident)) {
             return capture;
         }
     }
 
-    return AlsaError.capture_not_found;
+    return CardError.capture_not_found;
 }
 
 /// Retrieves the index of a port by its identifier and stream type.
@@ -264,7 +275,7 @@ pub fn getCaptureByIdent(self: AudioCard, ident: []const u8) !AudioCardInfo {
 /// - `ident`: The identifier string(e.g. `hw:0,1`) of the port.
 /// - Returns: The index of the port with the specified identifier.
 /// - Errors: Returns an error if no matching port is found.
-pub fn getIndexOf(self: AudioCard, stream_type: StreamType, ident: []const u8) !usize {
+pub fn getIndexOf(self: AudioCard, stream_type: StreamType, ident: []const u8) CardError!usize {
     const items = if (stream_type == StreamType.playback) self.playbacks.items else self.captures.items;
 
     for (0.., items) |i, item| {
@@ -273,7 +284,7 @@ pub fn getIndexOf(self: AudioCard, stream_type: StreamType, ident: []const u8) !
         }
     }
 
-    return if (stream_type == StreamType.playback) AlsaError.playback_not_found else AlsaError.capture_not_found;
+    return if (stream_type == StreamType.playback) CardError.playback_not_found else CardError.capture_not_found;
 }
 
 /// Sets the channel count for the specified port.
@@ -282,22 +293,28 @@ pub fn getIndexOf(self: AudioCard, stream_type: StreamType, ident: []const u8) !
 /// - `at`: The index of the port.
 /// - `channel_count`: The desired channel count.
 /// - Errors: Returns an error if the index is out of bounds or if the channel count is invalid.
-pub fn setChannelCount(self: *AudioCard, stream_type: StreamType, at: usize, channel_count: ChannelCount) !void {
-    if (at >= self.captures.items.len) {
-        return AlsaError.playback_out_of_bounds;
+pub fn setChannelCount(self: *AudioCard, stream_type: StreamType, at: usize, channel_count: ChannelCount) CardError!void {
+    if (stream_type == .capture and at >= self.captures.items.len) {
+        return CardError.capture_out_of_bounds;
     }
 
-    var port = if (stream_type == .playback) self.playbacks.items[at] else self.captures.items[at];
-    const ss = port.supported_settings orelse return AlsaError.card_invalid_support_settings;
+    if (stream_type == .playback and at >= self.playbacks.items.len) {
+        return CardError.playback_out_of_bounds;
+    }
+
+    // take a reference to mutate the selected settings
+    const port = if (stream_type == .playback) &self.playbacks.items[at] else &self.captures.items[at];
+
+    const ss = port.supported_settings orelse return CardError.invalid_supported_settings;
 
     for (ss.channel_counts.items) |channel| {
         if (channel == channel_count) {
-            port.selected_settings.channels = channel;
+            port.*.selected_settings.channels = channel;
             return;
         }
     }
 
-    return AlsaError.card_invalid_settings;
+    return CardError.invalid_settings;
 }
 
 // Sets the audio format for the specified port.
@@ -306,22 +323,26 @@ pub fn setChannelCount(self: *AudioCard, stream_type: StreamType, at: usize, cha
 /// - `at`: The index of the port.
 /// - `audio_format`: The desired audio format.
 /// - Errors: Returns an error if the index is out of bounds or if the format is invalid.
-pub fn setFormat(self: *AudioCard, stream_type: StreamType, at: usize, audio_format: FormatType) !void {
-    if (at >= self.captures.items.len) {
-        return AlsaError.playback_out_of_bounds;
+pub fn setFormat(self: *AudioCard, stream_type: StreamType, at: usize, audio_format: FormatType) CardError!void {
+    if (stream_type == .capture and at >= self.captures.items.len) {
+        return CardError.capture_out_of_bounds;
     }
 
-    var port = if (stream_type == .playback) self.playbacks.items[at] else self.captures.items[at];
-    const ss = port.supported_settings orelse return AlsaError.card_invalid_support_settings;
+    if (stream_type == .playback and at >= self.playbacks.items.len) {
+        return CardError.playback_out_of_bounds;
+    }
+
+    const port = if (stream_type == .playback) &self.playbacks.items[at] else &self.captures.items[at];
+    const ss = port.supported_settings orelse return CardError.invalid_supported_settings;
 
     for (ss.formats.items) |f| {
         if (f == audio_format) {
-            port.selected_settings.format = f;
+            port.*.selected_settings.format = f;
             return;
         }
     }
 
-    return AlsaError.card_invalid_settings;
+    return CardError.invalid_settings;
 }
 
 // Sets the sample rate for the specified port.
@@ -330,22 +351,26 @@ pub fn setFormat(self: *AudioCard, stream_type: StreamType, at: usize, audio_for
 /// - `at`: The index of the port.
 /// - `sample_rate`: The desired sample rate.
 /// - Errors: Returns an error if the index is out of bounds or if the format is invalid.
-pub fn setSampleRate(self: *AudioCard, stream_type: StreamType, at: usize, sample_rate: SampleRate) !void {
-    if (at >= self.captures.items.len) {
-        return AlsaError.playback_out_of_bounds;
+pub fn setSampleRate(self: *AudioCard, stream_type: StreamType, at: usize, sample_rate: SampleRate) CardError!void {
+    if (stream_type == .capture and at >= self.captures.items.len) {
+        return CardError.capture_out_of_bounds;
     }
 
-    var port = if (stream_type == .playback) self.playbacks.items[at] else self.captures.items[at];
-    const ss = port.supported_settings orelse return AlsaError.card_invalid_support_settings;
+    if (stream_type == .playback and at >= self.playbacks.items.len) {
+        return CardError.playback_out_of_bounds;
+    }
+
+    const port = if (stream_type == .playback) &self.playbacks.items[at] else &self.captures.items[at];
+    const ss = port.supported_settings orelse return CardError.invalid_supported_settings;
 
     for (ss.sample_rates.items) |sr| {
         if (sr == sample_rate) {
-            port.selected_settings.sample_rate = sr;
+            port.*.selected_settings.sample_rate = sr;
             return;
         }
     }
 
-    return AlsaError.card_invalid_settings;
+    return CardError.invalid_settings;
 }
 
 pub fn format(self: AudioCard, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -396,4 +421,165 @@ pub fn deinit(self: *AudioCard) void {
 
     self.playbacks.deinit();
     self.captures.deinit();
+}
+
+const expectEqualStrings = std.testing.expectEqualStrings;
+const expectEqual = std.testing.expectEqual;
+const expectError = std.testing.expectError;
+
+test "AudioCard.init initializes correctly" {
+    const allocator = std.testing.allocator;
+
+    const ident = Identifier{ .device = 0, .card = 0 };
+    const id = "Card ID";
+    const name = "Card Name";
+
+    var card = AudioCard.init(allocator, try AudioCardInfo.init(allocator, ident, id, name));
+    defer card.deinit();
+
+    try expectError(CardError.playback_out_of_bounds, card.getPlaybackAt(0));
+    try expectError(CardError.capture_out_of_bounds, card.getCaptureAt(0));
+
+    try expectEqualStrings(id, card.details.id);
+    try expectEqualStrings(name, card.details.name);
+    try expectEqual(0, card.details.index);
+    try expectEqual(0, card.playbacks.items.len);
+    try expectEqual(0, card.captures.items.len);
+}
+
+test "AudioCard.addPlayback adds playback port correctly" {
+    const allocator = std.testing.allocator;
+
+    const ident = Identifier{ .device = 0, .card = 0 };
+    const id = "Card ID";
+    const name = "Card Name";
+
+    var card = AudioCard.init(allocator, try AudioCardInfo.init(allocator, ident, id, name));
+
+    defer card.deinit();
+    try card.addPlayback(1, "Playback ID", "Playback Name");
+
+    try expectError(CardError.playback_out_of_bounds, card.getPlaybackAt(1));
+
+    const playback = card.getPlaybackAt(0) catch unreachable;
+
+    try expectEqualStrings("Playback ID", playback.id);
+    try expectEqualStrings("Playback Name", playback.name);
+    try expectEqual(1, playback.index);
+}
+
+test "AudioCard.addCapture adds capture port correctly" {
+    const allocator = std.testing.allocator;
+
+    const ident = Identifier{ .device = 0, .card = 0 };
+    const id = "Card ID";
+    const name = "Card Name";
+
+    var card = AudioCard.init(allocator, try AudioCardInfo.init(allocator, ident, id, name));
+    defer card.deinit();
+
+    try card.addCapture(2, "Capture ID", "Capture Name");
+
+    try expectError(CardError.capture_out_of_bounds, card.getCaptureAt(1));
+
+    const capture = card.getCaptureAt(0) catch unreachable;
+
+    try expectEqualStrings("Capture ID", capture.id);
+    try expectEqualStrings("Capture Name", capture.name);
+    try expectEqual(2, capture.index);
+}
+
+test "setChannelCount, setFormat, setSampleRate sets settings correctly" {
+    const allocator = std.testing.allocator;
+
+    // we need to mock the supported settings for this test
+    // as we call alsa to get system settings
+
+    var ss = SupportedSettings{
+        .formats = std.ArrayList(FormatType).init(allocator),
+        .sample_rates = std.ArrayList(SampleRate).init(allocator),
+        .channel_counts = std.ArrayList(ChannelCount).init(allocator),
+    };
+
+    ss.formats.append(FormatType.float64_little_endian) catch unreachable;
+    ss.sample_rates.append(SampleRate.sr_48Khz) catch unreachable;
+    ss.channel_counts.append(ChannelCount.mono) catch unreachable;
+
+    const ident = Identifier{ .device = 0, .card = 0 };
+    const id = "Card ID";
+    const name = "Card Name";
+
+    var card = AudioCard.init(allocator, try AudioCardInfo.init(allocator, ident, id, name));
+    defer card.deinit();
+
+    // avoiding calling ALSA and mocking the supported settings
+    try card.playbacks.append(try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "someid", "Playback 1"));
+    card.playbacks.items[0].supported_settings = ss;
+
+    try card.setChannelCount(StreamType.playback, 0, ChannelCount.mono);
+    try card.setFormat(StreamType.playback, 0, FormatType.float64_little_endian);
+    try card.setSampleRate(StreamType.playback, 0, SampleRate.sr_48Khz);
+
+    const playback = card.getPlaybackAt(0) catch unreachable;
+
+    try expectEqual(ChannelCount.mono, playback.selected_settings.channels.?);
+    try expectEqual(FormatType.float64_little_endian, playback.selected_settings.format.?);
+    try expectEqual(SampleRate.sr_48Khz, playback.selected_settings.sample_rate.?);
+
+    // test unsupported settings
+    try expectError(CardError.invalid_settings, card.setChannelCount(StreamType.playback, 0, ChannelCount.stereo));
+    try expectError(CardError.invalid_settings, card.setFormat(StreamType.playback, 0, FormatType.unsigned_16bits_big_endian));
+    try expectError(CardError.invalid_settings, card.setSampleRate(StreamType.playback, 0, SampleRate.sr_44Khz));
+}
+
+test "getPlaybackByIdent returns correct playback port" {
+    const allocator = std.testing.allocator;
+
+    const ident2 = "hw:0,1";
+
+    var card = AudioCard.init(
+        allocator,
+        try AudioCardInfo.init(allocator, .{ .device = 0, .card = 0 }, "Card ID", "Card Name"),
+    );
+    defer card.deinit();
+
+    // Adding playbacks manually to avoid calling ALSA with SupportedSettings
+    try card.playbacks.append(try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "someid1", "Playback 1"));
+    try card.playbacks.append(try AudioCardInfo.init(allocator, .{ .card = 0, .device = 1 }, "someid2", "Playback 2"));
+
+    const playback = try card.getPlaybackByIdent(ident2);
+    try expectEqualStrings(ident2, playback.identifier);
+    try expectEqualStrings("Playback 2", playback.name);
+
+    // Test: Identifier not found
+    const non_existing_ident = "hw:1,0";
+    const result = card.getPlaybackByIdent(non_existing_ident);
+    try expectError(CardError.playback_not_found, result);
+}
+
+test "getCaptureByIdent returns correct capture port" {
+    const allocator = std.testing.allocator;
+
+    const ident1 = "hw:0,0";
+    const ident2 = "hw:0,1";
+
+    var card = AudioCard.init(
+        allocator,
+        try AudioCardInfo.init(allocator, .{ .device = 0, .card = 0 }, "Card ID", "Card Name"),
+    );
+    defer card.deinit();
+
+    // Adding captures manually to avoid calling ALSA with SupportedSettings
+    try card.captures.append(try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, ident1, "Capture 1"));
+    try card.captures.append(try AudioCardInfo.init(allocator, .{ .card = 0, .device = 1 }, ident2, "Capture 2"));
+
+    // Test: Retrieve the second capture port
+    const capture = try card.getCaptureByIdent(ident2);
+    try expectEqualStrings(ident2, capture.identifier);
+    try expectEqualStrings("Capture 2", capture.name);
+
+    // Test: Identifier not found
+    const non_existing_ident = "hw:1,0";
+    const result = card.getCaptureByIdent(non_existing_ident);
+    try expectError(CardError.capture_not_found, result);
 }
