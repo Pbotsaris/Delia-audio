@@ -347,6 +347,54 @@ pub const FormatType = enum(c_int) {
             else => .t_u8_C,
         };
     }
+
+    pub fn ToType(self: FormatType) type {
+        return switch (self) {
+            .signed_8bits => i8,
+            .unsigned_8bits => u8,
+
+            .signed_16bits_little_endian, .signed_16bits_big_endian => i16,
+            .unsigned_16bits_little_endian, .unsigned_16bits_big_endian => .u16,
+
+            // NOTE: that Alsa uses 32 word packed in 4bytesm with the lower 20 bits used
+            // The data is LSB justified, meaning the data is packed towards the least significant bit
+            .signed_20bits_little_endian, .signed_20bits_big_endian => i32,
+            .unsigned_20bits_little_endian, .unsigned_20bits_big_endian => u32,
+
+            // NOTE: that in ALSA this uses 32bits words using the bottom 3 bytes
+            .signed_24bits_little_endian, .signed_24bits_big_endian => i32,
+            .unsigned_24bits_little_endian, .unsigned_24bits_big_endian => u32,
+
+            .signed_32bits_little_endian, .signed_32bits_big_endian => i32,
+            .unsigned_32bits_little_endian, .unsigned_32bits_big_endian => u32,
+
+            // ranges from -1.0 to 1.0
+            .float_32bits_little_endian, .float_32bits_big_endian => f32,
+            .float64_little_endian, .float64_big_endian => f64,
+
+            .signed_24bits_packed3_little_endian,
+            .signed_24bits_packed3_big_endian,
+            .unsigned_24bits_packed3_little_endian,
+            .unsigned_24bits_packed3_big_endian,
+            .signed_20bits_packed3_little_endian,
+            .signed_20bits_packed3_big_endian,
+            .unsigned_20bits_packed3_little_endian,
+            .unsigned_20bits_packed3_big_endian,
+            .signed_18bits_packed3_little_endian,
+            .signed_18bits_packed3_big_endian,
+            .unsigned_18bits_packed3_little_endian,
+            .unsigned_18bits_packed3_big_endian,
+            => [3]u8,
+
+            // Generally 32bits with audio in 16, 20, 24 bits
+            // and the remaining bits is used for syncronization
+            .iec958_subframe_little_endian, .iec958_subframe_big_endian => u32,
+
+            // Compressed formats
+            // will need decoding logic
+            else => u8,
+        };
+    }
 };
 
 pub const formats: [@typeInfo(FormatType).Enum.fields.len]c_int = blk: {

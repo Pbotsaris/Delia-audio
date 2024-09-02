@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const c_alsa = @cImport({
-    @cInclude("alsa/asoundlib.h");
+    @cInclude("alsa_wrapper.h");
 });
 
 const settings = @import("settings.zig");

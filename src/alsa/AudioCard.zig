@@ -5,7 +5,7 @@
 const std = @import("std");
 
 const c_alsa = @cImport({
-    @cInclude("alsa/asoundlib.h");
+    @cInclude("alsa_wrapper.h");
 });
 
 const AlsaError = @import("error.zig").AlsaError;

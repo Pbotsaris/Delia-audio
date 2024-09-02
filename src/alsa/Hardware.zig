@@ -17,7 +17,7 @@ const ChannelCount = @import("settings.zig").ChannelCount;
 pub const AudioCard = @import("AudioCard.zig");
 
 const c_alsa = @cImport({
-    @cInclude("alsa/asoundlib.h");
+    @cInclude("alsa_wrapper.h");
 });
 
 const Hardware = @This();
@@ -82,12 +82,23 @@ pub fn getAudioCardByIdent(self: Hardware, ident: []const u8) HardwareError!Audi
     try validateIdentifier(ident);
 
     for (self.cards.items) |card| {
+
+        // first we try to match the identifier just with the card index e.g. hw:0
+        var split = std.mem.split(u8, card.details.identifier, ",");
+
+        if (split.next()) |i| {
+            if (std.mem.eql(u8, ident, i)) {
+                return card;
+            }
+        }
+
+        // then, in case the user is trying to match with also the device/port identifier e.g. hw:0,0
         if (std.mem.eql(u8, card.details.identifier, ident)) {
             return card;
         }
     }
 
-    return HardwareError.cards_out_of_bounds;
+    return HardwareError.card_not_found;
 }
 
 /// Selects an audio card by its index.
@@ -332,4 +343,121 @@ fn errWhenEmpty(len: usize) HardwareError!void {
         log.err("Hardware: No cards available", .{});
         return HardwareError.card_not_found;
     }
+}
+
+test "getAudioCardAt returns correct AudioCard or error" {
+    const allocator = std.testing.allocator;
+    const AudioCardInfo = AudioCard.AudioCardInfo;
+
+    // Mocking the Hardware and AudioCard setup
+    var hardware = Hardware{
+        .cards = std.ArrayList(AudioCard).init(allocator),
+        .allocator = allocator,
+    };
+
+    defer hardware.deinit();
+
+    const ident1 = "hw:0";
+    const ident2 = "hw:1";
+
+    try hardware.cards.append(
+        AudioCard.init(
+            allocator,
+            try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, ident1, "Card 1"),
+        ),
+    );
+
+    try hardware.cards.append(
+        AudioCard.init(
+            allocator,
+            try AudioCardInfo.init(allocator, .{ .card = 1, .device = 0 }, ident2, "Card 2"),
+        ),
+    );
+
+    // Test: Retrieve the first card
+    const card1 = try hardware.getAudioCardAt(0);
+    try std.testing.expectEqualStrings("Card 1", card1.details.name);
+
+    // Test: Retrieve the second card
+    const card2 = try hardware.getAudioCardAt(1);
+    try std.testing.expectEqualStrings("Card 2", card2.details.name);
+
+    // Test: Out of bounds access
+    const result = hardware.getAudioCardAt(2);
+    try std.testing.expectError(HardwareError.cards_out_of_bounds, result);
+}
+
+test "getAudioCardByIdent returns correct AudioCard or error" {
+    const allocator = std.testing.allocator;
+    const AudioCardInfo = AudioCard.AudioCardInfo;
+
+    // Mocking the Hardware and AudioCard setup
+    var hardware = Hardware{
+        .cards = std.ArrayList(AudioCard).init(allocator),
+        .allocator = allocator,
+    };
+    defer hardware.deinit();
+
+    // both ways should work to retrieve the card, the port/device identifier is optional
+    const ident1 = "hw:0";
+    const ident2 = "hw:1,0";
+
+    try hardware.cards.append(
+        AudioCard.init(allocator, try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "someid", "Card 1")),
+    );
+    try hardware.cards.append(
+        AudioCard.init(allocator, try AudioCardInfo.init(allocator, .{ .card = 1, .device = 0 }, "someid2", "Card 2")),
+    );
+
+    const card2 = try hardware.getAudioCardByIdent(ident2);
+    try std.testing.expectEqualStrings("Card 2", card2.details.name);
+
+    const card1 = try hardware.getAudioCardByIdent(ident1);
+    try std.testing.expectEqualStrings("Card 1", card1.details.name);
+
+    const result = hardware.getAudioCardByIdent("hw:2,3");
+    try std.testing.expectError(HardwareError.card_not_found, result);
+}
+
+test "selectAudioPortAt and selectAudioPortByIdent select correct port or return errors" {
+    const allocator = std.testing.allocator;
+    const AudioCardInfo = AudioCard.AudioCardInfo;
+
+    // Mocking the Hardware and AudioCard setup
+    var hardware = Hardware{
+        .cards = std.ArrayList(AudioCard).init(allocator),
+        .allocator = allocator,
+    };
+    defer hardware.deinit();
+
+    // Mock AudioCard with playbacks and captures
+    var card = AudioCard.init(
+        allocator,
+        try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "audiocard_id", "Card 1"),
+    );
+
+    // Manually add playback and capture ports to avoid ALSA API calls
+    try card.playbacks.append(
+        try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "playback_id", "Playback 1"),
+    );
+    try card.captures.append(
+        try AudioCardInfo.init(allocator, .{ .card = 0, .device = 1 }, "capture_id", "Capture 1"),
+    );
+
+    // Add card to hardware
+    try hardware.cards.append(card);
+
+    try hardware.selectAudioPortAt(StreamType.playback, 0);
+    try std.testing.expectEqual(0, hardware.selected_port);
+    try std.testing.expectEqual(StreamType.playback, hardware.selected_stream_type);
+
+    try hardware.selectAudioPortByIdent(StreamType.capture, "hw:0,1");
+    try std.testing.expectEqual(0, hardware.selected_port);
+    try std.testing.expectEqual(StreamType.capture, hardware.selected_stream_type);
+
+    const result = hardware.selectAudioPortAt(StreamType.playback, 1);
+    try std.testing.expectError(AudioCard.CardError.playback_out_of_bounds, result);
+
+    const result2 = hardware.selectAudioPortByIdent(StreamType.playback, "invalid_id");
+    try std.testing.expectError(HardwareError.invalid_identifier, result2);
 }
