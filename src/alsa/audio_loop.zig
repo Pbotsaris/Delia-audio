@@ -1,4 +1,5 @@
 const std = @import("std");
+const AudioData = @import("audio_data.zig").AudioData;
 const Device = @import("device.zig").Device;
 const FormatType = @import("settings.zig").FormatType;
 
@@ -8,7 +9,7 @@ const c_alsa = @cImport({
 
 const log = std.log.scoped(.alsa);
 
-pub const CallbackError = error{
+pub const AudioLoopError = error{
     start,
     xrun,
     suspended,
@@ -16,7 +17,7 @@ pub const CallbackError = error{
     timeout,
 };
 
-pub fn AudioCallback(comptime format_type: FormatType) type {
+pub fn AudioLoop(comptime format_type: FormatType) type {
     return struct {
         const Self = @This();
 
@@ -25,7 +26,7 @@ pub fn AudioCallback(comptime format_type: FormatType) type {
 
         device: Device(format_type),
         running: bool = false,
-        callback: *const fn (*[]u8) void,
+        callback: *const fn (*AudioData) void,
 
         pub fn init(device: Device(format_type), callback: *const fn (*[]u8) void) Self {
             return .{
@@ -34,13 +35,13 @@ pub fn AudioCallback(comptime format_type: FormatType) type {
             };
         }
 
-        fn xrunRecovery(self: *Self, c_err: c_int) CallbackError!void {
-            const err = if (c_err == -c_alsa.EPIPE) CallbackError.xrun else CallbackError.suspended;
+        fn xrunRecovery(self: *Self, c_err: c_int) AudioLoopError!void {
+            const err = if (c_err == -c_alsa.EPIPE) AudioLoopError.xrun else AudioLoopError.suspended;
 
             const needs_prepare = switch (err) {
-                CallbackError.xrun => true,
+                AudioLoopError.xrun => true,
 
-                CallbackError.suspended => blk: {
+                AudioLoopError.suspended => blk: {
                     var res = c_alsa.snd_pcm_resume(self.device.pcm_handle);
                     var sleep: u64 = 100 * NANO_SECONDS;
                     var retries: i32 = MAX_RETRY;
@@ -48,9 +49,10 @@ pub fn AudioCallback(comptime format_type: FormatType) type {
                     while (res == -c_alsa.EAGAIN) {
                         if (retries == 0) {
                             log.debug("Timeout while trying to resume device.", .{});
-                            return CallbackError.timeout;
+                            return AudioLoopError.timeout;
                         }
 
+                        // TODO: improve this
                         std.time.sleep(sleep);
 
                         sleep *= 2; // exponential backoff
@@ -62,7 +64,7 @@ pub fn AudioCallback(comptime format_type: FormatType) type {
                     break :blk false;
                 },
 
-                else => return CallbackError.unexpected,
+                else => return AudioLoopError.unexpected,
             };
 
             if (!needs_prepare) return;
@@ -71,11 +73,11 @@ pub fn AudioCallback(comptime format_type: FormatType) type {
 
             if (res < 0) {
                 log.debug("Failed to recover from xrun: {s}", .{c_alsa.snd_strerror(res)});
-                return CallbackError.xrun;
+                return AudioLoopError.xrun;
             }
         }
 
-        pub fn start(self: *Self) CallbackError!void {
+        pub fn start(self: *Self) AudioLoopError!void {
             self.running = true;
             try self.directWrite();
         }
@@ -100,7 +102,7 @@ pub fn AudioCallback(comptime format_type: FormatType) type {
                     else => {
                         if (state < 0) {
                             log.debug("Unexpected state error: {s}", .{c_alsa.snd_strerror(state)});
-                            return CallbackError.unexpected;
+                            return AudioLoopError.unexpected;
                         }
                     },
                 }
@@ -116,7 +118,7 @@ pub fn AudioCallback(comptime format_type: FormatType) type {
                     const err = c_alsa.snd_pcm_start(self.device.pcm_handle);
                     if (err < 0) {
                         log.err("Failed to start pcm: {s}", .{c_alsa.snd_strerror(err)});
-                        return CallbackError.start;
+                        return AudioLoopError.start;
                     }
 
                     stopped = false;
@@ -149,13 +151,17 @@ pub fn AudioCallback(comptime format_type: FormatType) type {
                         stopped = true;
                     }
 
-                    const written_area = areas orelse return CallbackError.unexpected;
-                    const addr = written_area.addr orelse return CallbackError.unexpected;
+                    const written_area = areas orelse return AudioLoopError.unexpected;
+                    const addr = written_area.addr orelse return AudioLoopError.unexpected;
                     const byte_rate: c_ulong = @intCast(self.device.audio_format.byte_rate);
 
-                    var buffer: []u8 = @as([*]u8, @ptrCast(addr))[0 .. expected_to_transfer * byte_rate];
+                    const buffer: []u8 = @as([*]u8, @ptrCast(addr))[0 .. expected_to_transfer * byte_rate];
 
-                    self.callback(&buffer);
+                    const audio_data =
+                        AudioData(self.device.audio_format.format_type)
+                        .init(buffer, self.device.channels, self.device.format);
+
+                    self.callback(&audio_data);
 
                     const frames_actually_transfered =
                         c_alsa.snd_pcm_mmap_commit(self.device.pcm_handle, offset, expected_to_transfer);

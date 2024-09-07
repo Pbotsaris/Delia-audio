@@ -51,7 +51,7 @@ pub fn build(b: *std.Build) void {
     exe_check.linkSystemLibrary("asound");
     exe_check.addIncludePath(b.path("src/c"));
 
-    b.installArtifact(exe_check);
+    //b.installArtifact(exe_check);
 
     const check = b.step("check", "Check if the app compile");
     check.dependOn(&exe_check.step);

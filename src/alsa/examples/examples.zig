@@ -1,15 +1,14 @@
 const std = @import("std");
 const alsa = @import("../alsa.zig");
+const Device = alsa.device.Device(.signed_16bits_little_endian);
 
-fn callback(data: *[]u8) void {
-    std.debug.print("callback: data.len = {d}", .{data.len});
-    @memset(data.*, 0);
+fn callback(data: Device.Data()) void {
+    std.debug.print("Callback called with len: {d}", .{data.data.len});
 }
 
 pub fn creatingDevice() void {
 
     // providing the format at comptime type will allow operation on device to be type safe
-    const Device = alsa.device.Device(.signed_16bits_little_endian);
 
     var dev = Device.init(.{
         .sample_rate = .sr_44Khz,
@@ -25,15 +24,18 @@ pub fn creatingDevice() void {
         std.debug.print("Failed to prepare device: {any}", .{err});
     };
 
-    var cb = Device.AudioCallback.init(dev, callback);
-
-    cb.start() catch |err| {
-        std.debug.print("Failed to start callback: {any}", .{err});
+    dev.start(callback) catch |err| {
+        std.debug.print("Failed to start device: {any}", .{err});
     };
 
-    dev.deinit() catch |err| {
-        std.debug.print("Failed to deinit device: {any}", .{err});
-    };
+    //  var cb = Device.AudioCallback.init(dev, callback);
+    // cb.start() catch |err| {
+    //     std.debug.print("Failed to start callback: {any}", .{err});
+    // };
+
+    // dev.deinit() catch |err| {
+    //     std.debug.print("Failed to deinit device: {any}", .{err});
+    // };
 }
 
 // This example shows how to use the hardware object to initialize a device
