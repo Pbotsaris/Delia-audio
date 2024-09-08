@@ -1,19 +1,62 @@
 const std = @import("std");
 const alsa = @import("../alsa.zig");
-const Device = alsa.device.Device(.signed_16bits_little_endian);
 
-fn callback(data: Device.Data()) void {
-    std.debug.print("Callback called with len: {d}", .{data.data.len});
+// providing the format at comptime type will allow operation on device to be type safe
+const Device = alsa.device.GenericDevice(.signed_16bits_little_endian);
+
+// testing with a simple sine wave
+var phase: f64 = 0.0;
+
+fn callback(data: Device.AudioDataType()) void {
+    const freq: f64 = 400.0;
+    const amp: f64 = @as(f64, @floatFromInt(Device.maxFormatSize())) * 0.001;
+    const sr: f64 = @floatFromInt(data.sample_rate);
+    const phase_inc: f64 = 2.0 * std.math.pi * freq / sr;
+
+    // var b: [4096]u8 = undefined;
+    // var fba = std.heap.FixedBufferAllocator.init(&b);
+    // const allocator = fba.allocator();
+
+    const nb_samples = data.bufferSize() * data.channels;
+
+    for (0..nb_samples) |_| {
+        const sample = switch (data.T) {
+            f32, f64 => @as(data.T, @floatCast(amp * std.math.sin(phase))),
+            else => @as(data.T, @intFromFloat(amp * std.math.sin(phase))),
+        };
+
+        for (0..data.channels) |_| {
+            data.writeSample(sample) catch {
+                //  std.debug.print("Failed to write sample: {any}\n", .{err});
+                return;
+            };
+        }
+
+        phase += phase_inc;
+
+        if (phase >= 2.0 * std.math.pi) {
+            phase -= 2.0 * std.math.pi;
+        }
+    }
+
+    // data.rewind();
+
+    //  const d = data.readAllAlloc(allocator) catch |err| {
+    //      std.debug.print("Failed to write buffer: {any}", .{err});
+    //      return;
+    //  };
+
+    //  if (d) |samples| {
+    //      std.debug.print("Buffer: {d}\n", .{samples.len});
+    //  }
 }
 
 pub fn creatingDevice() void {
-
-    // providing the format at comptime type will allow operation on device to be type safe
-
     var dev = Device.init(.{
         .sample_rate = .sr_44Khz,
         .channels = .stereo,
         .stream_type = .playback,
+        .buffer_size = .bz_4096,
         .ident = "hw:0,0",
     }) catch |err| {
         std.debug.print("Failed to init device: {any}", .{err});
@@ -27,15 +70,6 @@ pub fn creatingDevice() void {
     dev.start(callback) catch |err| {
         std.debug.print("Failed to start device: {any}", .{err});
     };
-
-    //  var cb = Device.AudioCallback.init(dev, callback);
-    // cb.start() catch |err| {
-    //     std.debug.print("Failed to start callback: {any}", .{err});
-    // };
-
-    // dev.deinit() catch |err| {
-    //     std.debug.print("Failed to deinit device: {any}", .{err});
-    // };
 }
 
 // This example shows how to use the hardware object to initialize a device

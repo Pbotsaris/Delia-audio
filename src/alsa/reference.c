@@ -46,8 +46,8 @@ static void generate_sine(const snd_pcm_channel_area_t *areas,
     int big_endian = snd_pcm_format_big_endian(format) == 1;
     int to_unsigned = snd_pcm_format_unsigned(format) == 1;
     int is_float = (format == SND_PCM_FORMAT_FLOAT_LE ||
+
             format == SND_PCM_FORMAT_FLOAT_BE);
- 
     /* verify and prepare the contents of areas */
     for (chn = 0; chn < channels; chn++) {
         if ((areas[chn].first % 8) != 0) {

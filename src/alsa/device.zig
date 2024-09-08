@@ -30,10 +30,9 @@ pub const SampleRate = @import("settings.zig").SampleRate;
 pub const ChannelCount = @import("settings.zig").ChannelCount;
 pub const Mode = @import("settings.zig").Mode;
 pub const StartThreshold = @import("settings.zig").StartThreshold;
-const AudioData = @import("audio_data.zig").AudioData;
+const GenericAudioData = @import("audio_data.zig").GenericAudioData;
 
 const DeviceOptions = struct {
-    // there is no default values for these fields, user must provide them
     sample_rate: SampleRate = SampleRate.sr_44Khz,
     channels: ChannelCount = ChannelCount.stereo,
     stream_type: StreamType = StreamType.playback,
@@ -66,20 +65,18 @@ pub const DeviceSoftwareError = error{
     prepare,
 };
 
-pub const AudioLoopError = error{
-    start,
-    xrun,
-    suspended,
-    unexpected,
-    timeout,
-};
+pub const AudioLoopError = error{ start, xrun, suspended, unexpected, timeout, audio_buffer_nonalignment };
 
-pub fn Device(comptime format_type: FormatType) type {
+pub fn GenericDevice(comptime format_type: FormatType) type {
     const T = format_type.ToType();
 
     return struct {
-        pub fn Data() type {
-            return *AudioData(format_type);
+        pub fn AudioDataType() type {
+            return *GenericAudioData(format_type);
+        }
+
+        pub fn maxFormatSize() usize {
+            return Format(T).maxSize();
         }
 
         const Self = @This();
@@ -211,9 +208,7 @@ pub fn Device(comptime format_type: FormatType) type {
 
             errdefer {
                 const e = c_alsa.snd_pcm_close(pcm_handle);
-                if (err < 0) {
-                    log.err("Failed to close PCM after init error: {s}", .{c_alsa.snd_strerror(e)});
-                }
+                _ = e;
             }
 
             err = c_alsa.snd_pcm_hw_params_malloc(&params);
@@ -320,13 +315,12 @@ pub fn Device(comptime format_type: FormatType) type {
                 .access_type = opts.access_type,
                 .hardware_buffer_size = @as(u32, @intCast(hardware_buffer_size)),
                 .hardware_period_size = @as(u32, @intCast(hardware_period_size)),
-                // TODO
                 .audio_format = Format(T).init(FORMAT_TYPE),
             };
         }
 
-        /// Prepares the ALSA device for playback or capture using the specified strategy.
         ///
+        /// Prepares the ALSA device for playback or capture using the specified strategy.
         /// This function configures the software parameters of the ALSA device, including the
         /// method by which audio data will be transferred to or from the hardware.
         ///
@@ -445,17 +439,19 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
         const Self = @This();
 
         pub fn AudioCallback() type {
-            return *const fn (*AudioData(format_type)) void;
+            return *const fn (*GenericAudioData(format_type)) void;
         }
 
         const MAX_RETRY = 50;
         const NANO_SECONDS = 1_000_000; // 100ms
+        const FIRST_ALIGN = 8;
+        const STEP_ALIGN = 16;
 
-        device: Device(format_type),
+        device: GenericDevice(format_type),
         running: bool = false,
         callback: AudioCallback(),
 
-        pub fn init(device: Device(format_type), callback: AudioCallback()) Self {
+        pub fn init(device: GenericDevice(format_type), callback: AudioCallback()) Self {
             return .{
                 .device = device,
                 .callback = callback,
@@ -511,7 +507,7 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
 
         fn directWrite(self: *Self) !void {
             const buffer_size: c_ulong = @intFromEnum(self.device.buffer_size);
-            var areas: ?*c_alsa.snd_pcm_channel_area_t = null;
+            var maybe_areas: ?*c_alsa.snd_pcm_channel_area_t = null;
             var stopped: bool = true;
 
             while (self.running) {
@@ -571,27 +567,35 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
                 while (to_transfer > 0) {
                     // we request for a transfer_size frames from begin but it may return less
                     var expected_to_transfer = to_transfer;
-                    const res = c_alsa.snd_pcm_mmap_begin(self.device.pcm_handle, &areas, &offset, &expected_to_transfer);
+                    const res = c_alsa.snd_pcm_mmap_begin(self.device.pcm_handle, &maybe_areas, &offset, &expected_to_transfer);
 
                     if (res < 0) {
                         try self.xrunRecovery(res);
                         stopped = true;
                     }
 
-                    const written_area = areas orelse return AudioLoopError.unexpected;
-                    const addr = written_area.addr orelse return AudioLoopError.unexpected;
-                    const byte_rate: c_ulong = @intCast(self.device.audio_format.byte_rate);
+                    const areas = maybe_areas orelse return AudioLoopError.unexpected;
+                    const addr = areas.addr orelse return AudioLoopError.unexpected;
+                    const step: c_ulong = @divFloor(areas.step, 8);
+                    const beg: c_ulong = (@divFloor(areas.first, 8)) + (offset * step);
 
-                    const buffer: []u8 = @as([*]u8, @ptrCast(addr))[0 .. expected_to_transfer * byte_rate];
+                    const buffer: []u8 = @as([*]u8, @ptrCast(addr))[beg .. beg + expected_to_transfer * step];
 
                     var audio_data =
-                        AudioData(format_type)
-                        .init(buffer, self.device.channels, self.device.audio_format);
+                        GenericAudioData(format_type)
+                        .init(
+                        buffer,
+                        self.device.channels,
+                        self.device.sample_rate,
+                        self.device.audio_format,
+                    );
 
                     self.callback(&audio_data);
 
                     const frames_actually_transfered =
                         c_alsa.snd_pcm_mmap_commit(self.device.pcm_handle, offset, expected_to_transfer);
+
+                    log.info("Transferred {d} frames", .{frames_actually_transfered});
 
                     if (frames_actually_transfered < 0) {
                         try self.xrunRecovery(@intCast(frames_actually_transfered));
@@ -599,6 +603,18 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
 
                     to_transfer -= @as(c_ulong, @intCast(frames_actually_transfered));
                 }
+            }
+        }
+
+        fn verifyAlignment(area: *c_alsa.snd_pcm_channel_area_t, ch: u32) !void {
+            if (area[ch].first % FIRST_ALIGN != 0) {
+                log.err("Audio buffer non-aligned. area.[{d}].first == {d}", .{ ch, area[ch].first });
+                return AudioLoopError.audio_buffer_nonalignment;
+            }
+
+            if (area[ch].step % STEP_ALIGN != 0) {
+                log.err("Audio buffer non-aligned. area.[{d}].step == {d}", .{ ch, area[ch].step });
+                return AudioLoopError.audio_buffer_nonalignment;
             }
         }
     };

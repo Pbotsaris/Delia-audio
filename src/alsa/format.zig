@@ -13,6 +13,14 @@ const c_alsa = @cImport({
 pub fn Format(comptime T: type) type {
     return struct {
         const Self = @This();
+
+        pub fn maxSize() usize {
+            switch (T) {
+                f64, f32 => |FT| return std.math.floatMax(FT),
+                else => |IT| return std.math.maxInt(IT),
+            }
+        }
+
         // the format type as per ALSA definitions
         format_type: FormatType,
         // the signedness of the format: signed or unsigned

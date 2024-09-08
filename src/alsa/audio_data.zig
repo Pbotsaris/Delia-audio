@@ -11,19 +11,24 @@ pub const AudioDataError = error{
     unexpected_buffer_size,
 };
 
-pub fn AudioData(format_type: FormatType) type {
+pub fn GenericAudioData(format_type: FormatType) type {
     const T = format_type.ToType();
+
     return struct {
         const Self = @This();
+
         format: Format(T),
         channels: u32,
+        sample_rate: u32,
         data: []u8,
         position: usize,
+        comptime T: type = T,
 
-        pub fn init(data: []u8, channels: u32, format: Format(T)) Self {
+        pub fn init(data: []u8, channels: u32, sample_rate: u32, format: Format(T)) Self {
             return Self{
                 .format = format,
                 .channels = channels,
+                .sample_rate = sample_rate,
                 .data = data,
                 .position = 0,
             };
@@ -77,7 +82,7 @@ pub fn AudioData(format_type: FormatType) type {
             return sample;
         }
 
-        pub fn readAllAlloc(self: Self, allocator: std.mem.Allocator) AudioDataError!?[]T {
+        pub fn readAllAlloc(self: *Self, allocator: std.mem.Allocator) !?[]T {
             if (self.data.len == 0) return null;
             if (self.position >= self.data.len) return null;
 
@@ -89,7 +94,7 @@ pub fn AudioData(format_type: FormatType) type {
             }
 
             const samples_len = @divFloor(self.data.len, sample_size);
-            const samples = try allocator.alloc(T, samples_len);
+            var samples = try allocator.alloc(T, samples_len);
 
             for (0..samples_len) |sample_index| {
                 const sample: T = self.readSample() orelse return samples;
@@ -101,6 +106,10 @@ pub fn AudioData(format_type: FormatType) type {
 
         pub fn rewind(self: *Self) void {
             self.position = 0;
+        }
+
+        pub fn bufferSize(self: Self) usize {
+            return @divFloor(self.data.len, @sizeOf(T));
         }
 
         pub fn seek(self: *Self, sample_position: usize) !void {
@@ -169,7 +178,7 @@ test "AudioData.init initializes correctly" {
         .sample_type = 0,
     };
 
-    const data = AudioData(format_type).init(&buffer, channels, mockFormat);
+    const data = GenericAudioData(format_type).init(&buffer, channels, mockFormat);
 
     try testing.expectEqual(mockFormat, data.format);
     try testing.expectEqual(channels, data.channels);
@@ -269,9 +278,9 @@ test "AudioData.write writes a single sample correctly" {
     const unsigned_int_format = if (native_endian == .little) unsigned_int_format_le else unsigned_int_format_be;
     const float_format = if (native_endian == .little) float_format_le else float_format_be;
 
-    var signed_int_data = AudioData(signed_int).init(&signed_buffer, channels, signed_int_format);
-    var unsigned_int_data = AudioData(unsigned_int).init(&unsigned_buffer, channels, unsigned_int_format);
-    var float_data = AudioData(float).init(&float_buffer, channels, float_format);
+    var signed_int_data = GenericAudioData(signed_int).init(&signed_buffer, channels, signed_int_format);
+    var unsigned_int_data = GenericAudioData(unsigned_int).init(&unsigned_buffer, channels, unsigned_int_format);
+    var float_data = GenericAudioData(float).init(&float_buffer, channels, float_format);
 
     const signed_sample: i16 = -12345;
     const unsigned_sample: u32 = 123456;
@@ -305,7 +314,7 @@ test "AudioData.writeSample handles endianness correctly" {
     const format = if (native_endian == .little) signed_int_format_le else signed_int_format_be;
 
     // Change to big-endian format for testing
-    var data_big_endian = AudioData(signed_int).init(&buffer, channels, format);
+    var data_big_endian = GenericAudioData(signed_int).init(&buffer, channels, format);
     const sample: i16 = -123;
 
     // we are swaping to simulate we have a format that is not native to our system
@@ -330,8 +339,8 @@ test "AudioData.write and read multiple samples" {
     const signed_int_format = if (native_endian == .little) signed_int_format_le else signed_int_format_be;
     const float_format = if (native_endian == .little) float_format_le else float_format_be;
 
-    var signed_int_data = AudioData(signed_int).init(&signed_buffer, channels, signed_int_format);
-    var float_data = AudioData(float).init(&float_buffer, channels, float_format);
+    var signed_int_data = GenericAudioData(signed_int).init(&signed_buffer, channels, signed_int_format);
+    var float_data = GenericAudioData(float).init(&float_buffer, channels, float_format);
 
     var signed_samples = [_]i16{ -12345, 23456, -32768 };
     var float_samples = [_]f64{ 123456.789, -987654.321, 456789.123 };
@@ -363,7 +372,7 @@ test "AudioData.writeSample returns out_of_bounds when writing out of buffer spa
     const nb_samples = 2;
     var buffer: [nb_samples * @sizeOf(i16)]u8 = undefined;
 
-    var data = AudioData(format_type).init(&buffer, channels, mock_format);
+    var data = GenericAudioData(format_type).init(&buffer, channels, mock_format);
     var samples = [_]i16{ -12345, 23456 };
 
     try data.write(&samples);
@@ -379,7 +388,7 @@ test "AudioData.readSample returns null when reading out of bounds" {
     const nb_samples = 2;
     var buffer: [nb_samples * @sizeOf(i16)]u8 = undefined;
 
-    var data = AudioData(format_type).init(&buffer, channels, mock_format);
+    var data = GenericAudioData(format_type).init(&buffer, channels, mock_format);
     var samples = [_]i16{ -12345, 23456 };
 
     try data.write(&samples);
@@ -405,7 +414,7 @@ test "AudioData.seek positions correctly" {
     const nb_samples = 4;
     var buffer: [nb_samples * @sizeOf(i16)]u8 = undefined;
 
-    var data = AudioData(format_type).init(&buffer, channels, mock_format);
+    var data = GenericAudioData(format_type).init(&buffer, channels, mock_format);
     var samples = [nb_samples]i16{ -12345, 23456, -32768, 32767 };
     try data.write(&samples);
 
