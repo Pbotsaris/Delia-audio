@@ -444,8 +444,7 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
 
         const MAX_RETRY = 50;
         const NANO_SECONDS = 1_000_000; // 100ms
-        const FIRST_ALIGN = 8;
-        const STEP_ALIGN = 16;
+        const BYTE_ALIGN = 8;
 
         device: GenericDevice(format_type),
         running: bool = false,
@@ -576,10 +575,13 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
 
                     const areas = maybe_areas orelse return AudioLoopError.unexpected;
                     const addr = areas.addr orelse return AudioLoopError.unexpected;
-                    const step: c_ulong = @divFloor(areas.step, 8);
-                    const beg: c_ulong = (@divFloor(areas.first, 8)) + (offset * step);
 
-                    const buffer: []u8 = @as([*]u8, @ptrCast(addr))[beg .. beg + expected_to_transfer * step];
+                    try self.verifyAlignment(areas);
+
+                    const step: c_ulong = @divFloor(areas.step, 8);
+                    const buf_start: c_ulong = (@divFloor(areas.first, 8)) + (offset * step);
+
+                    const buffer: []u8 = @as([*]u8, @ptrCast(addr))[buf_start .. buf_start + expected_to_transfer * step];
 
                     var audio_data =
                         GenericAudioData(format_type)
@@ -595,7 +597,7 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
                     const frames_actually_transfered =
                         c_alsa.snd_pcm_mmap_commit(self.device.pcm_handle, offset, expected_to_transfer);
 
-                    log.info("Transferred {d} frames", .{frames_actually_transfered});
+                    log.debug("Transferred {d} frames", .{frames_actually_transfered});
 
                     if (frames_actually_transfered < 0) {
                         try self.xrunRecovery(@intCast(frames_actually_transfered));
@@ -606,14 +608,22 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
             }
         }
 
-        fn verifyAlignment(area: *c_alsa.snd_pcm_channel_area_t, ch: u32) !void {
-            if (area[ch].first % FIRST_ALIGN != 0) {
-                log.err("Audio buffer non-aligned. area.[{d}].first == {d}", .{ ch, area[ch].first });
+        inline fn verifyAlignment(self: Self, area: *c_alsa.snd_pcm_channel_area_t) !void {
+            if (area.first % BYTE_ALIGN != 0) {
+                log.err("Area.first not byte(8) aligned. area.first == {d}", .{area.first});
                 return AudioLoopError.audio_buffer_nonalignment;
             }
 
-            if (area[ch].step % STEP_ALIGN != 0) {
-                log.err("Audio buffer non-aligned. area.[{d}].step == {d}", .{ ch, area[ch].step });
+            const bit_depth: c_uint = @intCast(self.device.audio_format.bit_depth);
+            const physical_byte_rate: c_uint = @intCast(self.device.audio_format.physical_byte_rate);
+
+            if (area.step % bit_depth != 0) {
+                log.err("Area.step is non-aligned with audio_format.bit_depth. area.step == {d} bits && audio_format.bit_depth == {d} bits", .{ area.step, bit_depth });
+                return AudioLoopError.audio_buffer_nonalignment;
+            }
+
+            if (area.step != (physical_byte_rate * bit_depth)) {
+                log.err("Area.step is not equal to audio_format.physical_byte_rate. area.step == {d} bits && audio_format.physical_byte_rate == {d} bits", .{ area.step, physical_byte_rate * bit_depth });
                 return AudioLoopError.audio_buffer_nonalignment;
             }
         }
