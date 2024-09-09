@@ -13,10 +13,6 @@ fn callback(data: Device.AudioDataType()) void {
     const sr: f64 = @floatFromInt(data.sample_rate);
     const phase_inc: f64 = 2.0 * std.math.pi * freq / sr;
 
-    // var b: [4096]u8 = undefined;
-    // var fba = std.heap.FixedBufferAllocator.init(&b);
-    // const allocator = fba.allocator();
-
     const nb_samples = data.bufferSize() * data.channels;
 
     for (0..nb_samples) |_| {
@@ -27,7 +23,6 @@ fn callback(data: Device.AudioDataType()) void {
 
         for (0..data.channels) |_| {
             data.writeSample(sample) catch {
-                //  std.debug.print("Failed to write sample: {any}\n", .{err});
                 return;
             };
         }
@@ -38,25 +33,14 @@ fn callback(data: Device.AudioDataType()) void {
             phase -= 2.0 * std.math.pi;
         }
     }
-
-    // data.rewind();
-
-    //  const d = data.readAllAlloc(allocator) catch |err| {
-    //      std.debug.print("Failed to write buffer: {any}", .{err});
-    //      return;
-    //  };
-
-    //  if (d) |samples| {
-    //      std.debug.print("Buffer: {d}\n", .{samples.len});
-    //  }
 }
 
 pub fn creatingDevice() void {
     var dev = Device.init(.{
-        .sample_rate = .sr_44Khz,
+        .sample_rate = .sr_44k100hz,
         .channels = .stereo,
         .stream_type = .playback,
-        .buffer_size = .bz_4096,
+        .buffer_size = .bz_1024,
         .ident = "hw:0,0",
     }) catch |err| {
         std.debug.print("Failed to init device: {any}", .{err});
@@ -169,7 +153,7 @@ pub fn creatingDevice() void {
 //    // device will fail if settings are not supported by the hardware
 //    var device = alsa.Device.init(.{
 //        // you must provide sample rate, chnanels, format and steam type.
-//        .sample_rate = .sr_44Khz,
+//        .sample_rate = .sr_44k100hz,
 //        .channels = .stereo,
 //        .stream_type = .playback,
 //        .audio_format = .signed_16bits_little_endian,

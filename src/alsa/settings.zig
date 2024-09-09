@@ -58,23 +58,23 @@ pub const ChannelCount = enum(u32) {
 // https://en.wikipedia.org/wiki/Sampling_(signal_processing)
 // ommting incredibly high sample rates
 pub const SampleRate = enum(u32) {
-    sr_8Khz = 8000,
-    sr_11Khz = 11025,
-    sr_16Khz = 16000,
-    sr_22Khz = 22050,
-    sr_32Khz = 32000, // miniDV isoterical sample rate
-    sr_37Khz = 37800, // CD-XA audio
+    sr_8khz = 8000,
+    sr_11khz = 11025,
+    sr_16khz = 16000,
+    sr_22khz = 22050,
+    sr_32khz = 32000, // miniDV isoterical sample rate
+    sr_37khz = 37800, // CD-XA audio
     sr_44k56hz = 44056, // NTSC color subcarrier
-    sr_44Khz = 44100,
-    sr_50Khz = 50000,
+    sr_44k100hz = 44100,
+    sr_50khz = 50000,
     sr_50k400hz = 50400, // DAT audio
-    sr_64Khz = 64000, // very unconventional
-    sr_48Khz = 48000,
-    sr_82Khz = 82000,
-    sr_96Khz = 96000,
-    sr_176Khz = 176400, // HDCD recorders. 4x CD audio
-    sr_192Khz = 192000,
-    sr_352Khz = 352800,
+    sr_64khz = 64000, // very unconventional
+    sr_48khz = 48000,
+    sr_82khz = 82000,
+    sr_96khz = 96000,
+    sr_176khz = 176400, // HDCD recorders. 4x CD audio
+    sr_192khz = 192000,
+    sr_352khz = 352800,
 };
 
 /// interleaved channels     [L1 R1 L2 R2 L3 R3 3R...]
@@ -83,28 +83,36 @@ pub const AccessType = enum(c_uint) {
     /// read-only access: simpler API
     //. use `snd_pcm_readi` and `snd_pcm_writei` to read/write smaples.
     rw_interleaved = c_alsa.SND_PCM_ACCESS_RW_INTERLEAVED,
-    rw_noninterleaved = c_alsa.SND_PCM_ACCESS_RW_NONINTERLEAVED,
+    // NOT IN USE
+    // rw_noninterleaved = c_alsa.SND_PCM_ACCESS_RW_NONINTERLEAVED,
 
     /// MMAP access: more efficient
     /// can directly map the ALSA b uffer into the application's memory space
     mmap_interleaved = c_alsa.SND_PCM_ACCESS_MMAP_INTERLEAVED,
-    mmap_noninterleaved = c_alsa.SND_PCM_ACCESS_MMAP_NONINTERLEAVED,
+    // NOT IN USE
+    // mmap_noninterleaved = c_alsa.SND_PCM_ACCESS_MMAP_NONINTERLEAVED,
 
     // NOTE: ommting `SND_PCM_ACCESS_MMAP_COMPLEX`
 };
 
+/// The `Mode` enum defines the operating mode for the audio device.
+/// This implementation currently does not use any of the modes, but this may change in the future.
 pub const Mode = enum(c_int) {
     none = 0,
-    ///  opens in non-blocking mode: calls to read/write audio data will return immediately
-    nonblock = c_alsa.SND_PCM_NONBLOCK,
-    /// async for when handling audio I/O asynchronously
-    async_mode = c_alsa.SND_PCM_ASYNC,
-    /// prevents automatic resampling when sample rate doesn't match hardware
-    no_resample = c_alsa.SND_PCM_NO_AUTO_RESAMPLE,
-    /// prevents from automatically ajudisting the number of channel
-    no_autochannel = c_alsa.SND_PCM_NO_AUTO_CHANNELS,
-    /// prevents from automatically ajusting the sample format
-    no_autoformat = c_alsa.SND_PCM_NO_AUTO_FORMAT,
+    // NOT IN USE
+
+    //  opens in non-blocking mode: calls to read/write audio data will return immediately.
+    //  Mostly used in conjunction with `poll` or `select` to handle audio I/O asynchronously.
+    //nonblock = c_alsa.SND_PCM_NONBLOCK,
+
+    // async for when handling audio I/O asynchronously
+    // async_mode = c_alsa.SND_PCM_ASYNC,
+    // prevents automatic resampling when sample rate doesn't match hardware
+    // no_resample = c_alsa.SND_PCM_NO_AUTO_RESAMPLE,
+    // prevents from automatically ajudisting the number of channel
+    // no_autochannel = c_alsa.SND_PCM_NO_AUTO_CHANNELS,
+    // prevents from automatically ajusting the sample format
+    // no_autoformat = c_alsa.SND_PCM_NO_AUTO_FORMAT,
 };
 
 pub const Signedness = enum(u32) {

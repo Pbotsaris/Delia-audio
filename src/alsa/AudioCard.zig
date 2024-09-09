@@ -502,10 +502,10 @@ test "setChannelCount, setFormat, setSampleRate sets settings correctly" {
     };
 
     ss.formats.append(FormatType.float64_little_endian) catch unreachable;
-    ss.sample_rates.append(SampleRate.sr_48Khz) catch unreachable;
+    ss.sample_rates.append(SampleRate.sr_48khz) catch unreachable;
     ss.channel_counts.append(ChannelCount.mono) catch unreachable;
-
     const ident = Identifier{ .device = 0, .card = 0 };
+
     const id = "Card ID";
     const name = "Card Name";
 
@@ -518,18 +518,18 @@ test "setChannelCount, setFormat, setSampleRate sets settings correctly" {
 
     try card.setChannelCount(StreamType.playback, 0, ChannelCount.mono);
     try card.setFormat(StreamType.playback, 0, FormatType.float64_little_endian);
-    try card.setSampleRate(StreamType.playback, 0, SampleRate.sr_48Khz);
+    try card.setSampleRate(StreamType.playback, 0, SampleRate.sr_48khz);
 
     const playback = card.getPlaybackAt(0) catch unreachable;
 
     try expectEqual(ChannelCount.mono, playback.selected_settings.channels.?);
     try expectEqual(FormatType.float64_little_endian, playback.selected_settings.format.?);
-    try expectEqual(SampleRate.sr_48Khz, playback.selected_settings.sample_rate.?);
+    try expectEqual(SampleRate.sr_48khz, playback.selected_settings.sample_rate.?);
 
     // test unsupported settings
     try expectError(CardError.invalid_settings, card.setChannelCount(StreamType.playback, 0, ChannelCount.stereo));
     try expectError(CardError.invalid_settings, card.setFormat(StreamType.playback, 0, FormatType.unsigned_16bits_big_endian));
-    try expectError(CardError.invalid_settings, card.setSampleRate(StreamType.playback, 0, SampleRate.sr_44Khz));
+    try expectError(CardError.invalid_settings, card.setSampleRate(StreamType.playback, 0, SampleRate.sr_44k100hz));
 }
 
 test "getPlaybackByIdent returns correct playback port" {

@@ -33,15 +33,16 @@ pub const StartThreshold = @import("settings.zig").StartThreshold;
 const GenericAudioData = @import("audio_data.zig").GenericAudioData;
 
 const DeviceOptions = struct {
-    sample_rate: SampleRate = SampleRate.sr_44Khz,
+    sample_rate: SampleRate = SampleRate.sr_44k100hz,
     channels: ChannelCount = ChannelCount.stereo,
     stream_type: StreamType = StreamType.playback,
     ident: [:0]const u8 = "default",
-    mode: Mode = Mode.none,
     buffer_size: BufferSize = BufferSize.bz_2048,
     start_thresh: StartThreshold = StartThreshold.three_periods,
     timeout: i32 = -1,
-    access_type: AccessType = AccessType.mmap_interleaved,
+    // not exposed to the user for now
+    // access_type: AccessType = AccessType.mmap_interleaved,
+    // mode: Mode = Mode.none,
     allow_resampling: bool = false,
 };
 
@@ -65,7 +66,15 @@ pub const DeviceSoftwareError = error{
     prepare,
 };
 
-pub const AudioLoopError = error{ start, xrun, suspended, unexpected, timeout, audio_buffer_nonalignment };
+pub const AudioLoopError = error{
+    start,
+    xrun,
+    suspended,
+    unexpected,
+    timeout,
+    unsupported,
+    audio_buffer_nonalignment,
+};
 
 pub fn GenericDevice(comptime format_type: FormatType) type {
     const T = format_type.ToType();
@@ -96,7 +105,8 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
         /// Pointer to the software parameters configuration.
         sw_params: ?*c_alsa.snd_pcm_sw_params_t = null,
         /// Mode for opening the audio device (e.g., non-blocking, async).
-        mode: Mode,
+        /// Currently no mode is supported.
+        mode: Mode = Mode.none,
         /// Indicates whether the device is for playback or capture.
         stream_type: StreamType,
         /// Number of audio channels (e.g., 2 for stereo).
@@ -116,7 +126,8 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
         /// Timeout in milliseconds for ALSA to wait before returning an error during read/write operations.
         timeout: i32,
         /// Defines the transfer method used by the audio callback (e.g., read/write interleaved,  read/write non-interleaved , mmap intereaved).
-        access_type: AccessType,
+        /// Currently only mmap interleaved is supported.
+        access_type: AccessType = AccessType.mmap_interleaved,
         /// Audio sample format (e.g., 16-bit signed little-endian).
         audio_format: Format(T),
         /// TODO: Description
@@ -153,16 +164,14 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
         //    const port = try hardware.getSelectedAudioPort();
         //
         //    const opts = DeviceOptions{
-        //        .sample_rate = port.selected_settings.sample_rate orelse SampleRate.sr_44Khz,
+        //        .sample_rate = port.selected_settings.sample_rate orelse SampleRate.sr_44k100hz,
         //        .channels = port.selected_settings.channels orelse ChannelCount.stereo,
         //        .stream_type = port.stream_type orelse StreamType.playback,
         //        .audio_format = port.selected_settings.format orelse FormatType.signed_16bits_little_endian,
         //        .ident = port.identifier,
-        //        .mode = inc_opts.mode,
         //        .buffer_size = inc_opts.buffer_size,
         //        .start_thresh = inc_opts.start_thresh,
         //        .timeout = inc_opts.timeout,
-        //        .access_type = inc_opts.access_type,
         //        .allow_resampling = inc_opts.allow_resampling,
         //    };
         //
@@ -200,9 +209,10 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
 
             var dir: i32 = 0;
 
-            var err = c_alsa.snd_pcm_open(&pcm_handle, opts.ident.ptr, @intFromEnum(opts.stream_type), @intFromEnum(opts.mode));
+            // always mode none for now
+            var err = c_alsa.snd_pcm_open(&pcm_handle, opts.ident.ptr, @intFromEnum(opts.stream_type), @intFromEnum(Mode.none));
             if (err < 0) {
-                log.err("Failed to open PCM for StreamType: {s}, Mode: {s}: {s}", .{ @tagName(opts.stream_type), @tagName(opts.mode), c_alsa.snd_strerror(err) });
+                log.err("Failed to open PCM for StreamType: {s}, Mode: none: {s}", .{ @tagName(AccessType.mmap_interleaved), c_alsa.snd_strerror(err) });
                 return DeviceHardwareError.open_stream;
             }
 
@@ -228,10 +238,11 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
                 }
             }
 
-            err = c_alsa.snd_pcm_hw_params_set_access(pcm_handle, params, @intFromEnum(opts.access_type));
+            // always set mmap interleaved access type for now
+            err = c_alsa.snd_pcm_hw_params_set_access(pcm_handle, params, @intFromEnum(AccessType.mmap_interleaved));
 
             if (err < 0) {
-                log.err("Failed to set access type '{s}': {s}", .{ @tagName(opts.access_type), c_alsa.snd_strerror(err) });
+                log.err("Failed to set access type '{s}': {s}", .{ @tagName(AccessType.mmap_interleaved), c_alsa.snd_strerror(err) });
                 return DeviceHardwareError.access_type;
             }
 
@@ -307,12 +318,10 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
                 .channels = @intFromEnum(opts.channels),
                 .sample_rate = sample_rate,
                 .dir = dir,
-                .mode = opts.mode,
                 .stream_type = opts.stream_type,
                 .buffer_size = opts.buffer_size,
                 .start_thresh = opts.start_thresh,
                 .timeout = opts.timeout,
-                .access_type = opts.access_type,
                 .hardware_buffer_size = @as(u32, @intCast(hardware_buffer_size)),
                 .hardware_period_size = @as(u32, @intCast(hardware_period_size)),
                 .audio_format = Format(T).init(FORMAT_TYPE),
@@ -442,8 +451,17 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
             return *const fn (*GenericAudioData(format_type)) void;
         }
 
-        const MAX_RETRY = 50;
-        const NANO_SECONDS = 1_000_000; // 100ms
+        const AsyncData = struct {
+            samples: []format_type.ToType() = undefined,
+            areas: ?*c_alsa.snd_pcm_channel_area_t = null,
+        };
+
+        // configuration for xrun recovery retries
+        const MAX_RETRY = 5;
+        const MILLISECONDS = 1_000_000; // 1ms
+        const SLEEP_INCREMENT = 1.2;
+        //--
+
         const BYTE_ALIGN = 8;
 
         device: GenericDevice(format_type),
@@ -457,51 +475,17 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
             };
         }
 
-        fn xrunRecovery(self: *Self, c_err: c_int) AudioLoopError!void {
-            const err = if (c_err == -c_alsa.EPIPE) AudioLoopError.xrun else AudioLoopError.suspended;
-
-            const needs_prepare = switch (err) {
-                AudioLoopError.xrun => true,
-
-                AudioLoopError.suspended => blk: {
-                    var res = c_alsa.snd_pcm_resume(self.device.pcm_handle);
-                    var sleep: u64 = 100 * NANO_SECONDS;
-                    var retries: i32 = MAX_RETRY;
-
-                    while (res == -c_alsa.EAGAIN) {
-                        if (retries == 0) {
-                            log.debug("Timeout while trying to resume device.", .{});
-                            return AudioLoopError.timeout;
-                        }
-
-                        // TODO: improve this
-                        std.time.sleep(sleep);
-
-                        sleep *= 2; // exponential backoff
-                        retries -= 1;
-                        res = c_alsa.snd_pcm_resume(self.device.pcm_handle);
-                    }
-
-                    if (res < 0) break :blk true;
-                    break :blk false;
-                },
-
-                else => return AudioLoopError.unexpected,
-            };
-
-            if (!needs_prepare) return;
-
-            const res = c_alsa.snd_pcm_prepare(self.device.pcm_handle);
-
-            if (res < 0) {
-                log.debug("Failed to recover from xrun: {s}", .{c_alsa.snd_strerror(res)});
-                return AudioLoopError.xrun;
-            }
-        }
-
         pub fn start(self: *Self) AudioLoopError!void {
             self.running = true;
-            try self.directWrite();
+
+            switch (self.device.access_type) {
+                // this is the only access type currently supported at this point
+                AccessType.mmap_interleaved => try self.directWrite(),
+                else => {
+                    log.err("Unsupported access type: {s}", .{@tagName(self.device.access_type)});
+                    return AudioLoopError.unsupported;
+                },
+            }
         }
 
         fn directWrite(self: *Self) !void {
@@ -605,6 +589,52 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
 
                     to_transfer -= @as(c_ulong, @intCast(frames_actually_transfered));
                 }
+            }
+        }
+
+        fn xrunRecovery(self: *Self, c_err: c_int) AudioLoopError!void {
+            const err = if (c_err == -c_alsa.EPIPE) AudioLoopError.xrun else AudioLoopError.suspended;
+
+            const needs_prepare = switch (err) {
+                AudioLoopError.xrun => true,
+
+                AudioLoopError.suspended => blk: {
+                    var res = c_alsa.snd_pcm_resume(self.device.pcm_handle);
+                    var sleep: u64 = 10 * MILLISECONDS; // 10ms
+                    var retries: i32 = MAX_RETRY;
+
+                    while (res == -c_alsa.EAGAIN) {
+                        log.debug("Trying to resume device. Retry: {d}", .{MAX_RETRY - retries});
+
+                        if (retries == 0) {
+                            log.err("Timeout while trying to resume device after {d} retries.", .{MAX_RETRY});
+                            return AudioLoopError.timeout;
+                        }
+
+                        std.time.sleep(sleep);
+
+                        sleep = @intFromFloat(@as(f32, @floatFromInt(sleep)) * SLEEP_INCREMENT);
+                        retries -= 1;
+                        res = c_alsa.snd_pcm_resume(self.device.pcm_handle);
+                    }
+
+                    if (res < 0) break :blk true;
+                    break :blk false;
+                },
+
+                else => {
+                    log.err("Unexpected error: {s}", .{c_alsa.snd_strerror(c_err)});
+                    return AudioLoopError.unexpected;
+                },
+            };
+
+            if (!needs_prepare) return;
+
+            const res = c_alsa.snd_pcm_prepare(self.device.pcm_handle);
+
+            if (res < 0) {
+                log.err("Failed to recover from xrun: {s}", .{c_alsa.snd_strerror(res)});
+                return AudioLoopError.xrun;
             }
         }
 
