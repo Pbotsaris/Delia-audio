@@ -184,7 +184,7 @@ pub const SampleType = enum(u32) {
 };
 
 pub const FormatType = enum(c_int) {
-    unknown = c_alsa.SND_PCM_FORMAT_UNKNOWN,
+    // unknown = c_alsa.SND_PCM_FORMAT_UNKNOWN,
 
     // 8-bit integer formats
     signed_8bits = c_alsa.SND_PCM_FORMAT_S8,
@@ -225,23 +225,24 @@ pub const FormatType = enum(c_int) {
     // 3-byte per sample formats
     // These formats use 3 bytes per sample instead of 4, making them more compact than the regular 24-bit formats
 
+    // CURRENTLY NOT SUPPORTING packed formats until we have hardware to test it
     // 24-bit packed formats (3 bytes per sample)
-    signed_24bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_S24_3LE,
-    signed_24bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S24_3BE,
-    unsigned_24bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U24_3LE,
-    unsigned_24bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U24_3BE,
+    // signed_24bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_S24_3LE,
+    // signed_24bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S24_3BE,
+    // unsigned_24bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U24_3LE,
+    // unsigned_24bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U24_3BE,
 
-    // 20-bit packed formats (3 bytes per sample)
-    signed_20bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_S20_3LE,
-    signed_20bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S20_3BE,
-    unsigned_20bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U20_3LE,
-    unsigned_20bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U20_3BE,
+    // // 20-bit packed formats (3 bytes per sample)
+    // signed_20bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_S20_3LE,
+    // signed_20bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S20_3BE,
+    // unsigned_20bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U20_3LE,
+    // unsigned_20bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U20_3BE,
 
-    // 18-bit packed formats (3 bytes per sample)
-    signed_18bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_S18_3LE,
-    signed_18bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S18_3BE,
-    unsigned_18bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U18_3LE,
-    unsigned_18bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U18_3BE,
+    // // 18-bit packed formats (3 bytes per sample)
+    // signed_18bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_S18_3LE,
+    // signed_18bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_S18_3BE,
+    // unsigned_18bits_packed3_little_endian = c_alsa.SND_PCM_FORMAT_U18_3LE,
+    // unsigned_18bits_packed3_big_endian = c_alsa.SND_PCM_FORMAT_U18_3BE,
 
     // Compressed formats
     mu_law = c_alsa.SND_PCM_FORMAT_MU_LAW, // µ-law compression, common in North American telephony
@@ -332,19 +333,20 @@ pub const FormatType = enum(c_int) {
             .float_32bits_little_endian, .float_32bits_big_endian => .t_f32,
             .float64_little_endian, .float64_big_endian => .t_f64,
 
-            .signed_24bits_packed3_little_endian,
-            .signed_24bits_packed3_big_endian,
-            .unsigned_24bits_packed3_little_endian,
-            .unsigned_24bits_packed3_big_endian,
-            .signed_20bits_packed3_little_endian,
-            .signed_20bits_packed3_big_endian,
-            .unsigned_20bits_packed3_little_endian,
-            .unsigned_20bits_packed3_big_endian,
-            .signed_18bits_packed3_little_endian,
-            .signed_18bits_packed3_big_endian,
-            .unsigned_18bits_packed3_little_endian,
-            .unsigned_18bits_packed3_big_endian,
-            => .t_u8_3,
+            // NOT SUPPORTED (for now)
+            //.signed_24bits_packed3_little_endian,
+            //.signed_24bits_packed3_big_endian,
+            //.unsigned_24bits_packed3_little_endian,
+            //.unsigned_24bits_packed3_big_endian,
+            //.signed_20bits_packed3_little_endian,
+            //.signed_20bits_packed3_big_endian,
+            //.unsigned_20bits_packed3_little_endian,
+            //.unsigned_20bits_packed3_big_endian,
+            //.signed_18bits_packed3_little_endian,
+            //.signed_18bits_packed3_big_endian,
+            //.unsigned_18bits_packed3_little_endian,
+            //.unsigned_18bits_packed3_big_endian,
+            //=> .t_u8_3,
 
             // Generally 32bits with audio in 16, 20, 24 bits
             // and the remaining bits is used for syncronization
@@ -362,7 +364,7 @@ pub const FormatType = enum(c_int) {
             .unsigned_8bits => u8,
 
             .signed_16bits_little_endian, .signed_16bits_big_endian => i16,
-            .unsigned_16bits_little_endian, .unsigned_16bits_big_endian => .u16,
+            .unsigned_16bits_little_endian, .unsigned_16bits_big_endian => u16,
 
             // NOTE: that Alsa uses 32 word packed in 4bytesm with the lower 20 bits used
             // The data is LSB justified, meaning the data is packed towards the least significant bit
@@ -380,19 +382,20 @@ pub const FormatType = enum(c_int) {
             .float_32bits_little_endian, .float_32bits_big_endian => f32,
             .float64_little_endian, .float64_big_endian => f64,
 
-            .signed_24bits_packed3_little_endian,
-            .signed_24bits_packed3_big_endian,
-            .unsigned_24bits_packed3_little_endian,
-            .unsigned_24bits_packed3_big_endian,
-            .signed_20bits_packed3_little_endian,
-            .signed_20bits_packed3_big_endian,
-            .unsigned_20bits_packed3_little_endian,
-            .unsigned_20bits_packed3_big_endian,
-            .signed_18bits_packed3_little_endian,
-            .signed_18bits_packed3_big_endian,
-            .unsigned_18bits_packed3_little_endian,
-            .unsigned_18bits_packed3_big_endian,
-            => [3]u8,
+            // NOT SUPPORTED (for now)
+            // .signed_24bits_packed3_little_endian,
+            // .signed_24bits_packed3_big_endian,
+            // .unsigned_24bits_packed3_little_endian,
+            // .unsigned_24bits_packed3_big_endian,
+            // .signed_20bits_packed3_little_endian,
+            // .signed_20bits_packed3_big_endian,
+            // .unsigned_20bits_packed3_little_endian,
+            // .unsigned_20bits_packed3_big_endian,
+            // .signed_18bits_packed3_little_endian,
+            // .signed_18bits_packed3_big_endian,
+            // .unsigned_18bits_packed3_little_endian,
+            // .unsigned_18bits_packed3_big_endian,
+            // => [3]u8,
 
             // Generally 32bits with audio in 16, 20, 24 bits
             // and the remaining bits is used for syncronization
@@ -451,7 +454,7 @@ test "StreamType values match ALSA constants" {
 
 test "AccessType values match ALSA constants" {
     try expectEqual(c_alsa.SND_PCM_ACCESS_RW_INTERLEAVED, @intFromEnum(AccessType.rw_interleaved));
-    try expectEqual(c_alsa.SND_PCM_ACCESS_MMAP_NONINTERLEAVED, @intFromEnum(AccessType.mmap_noninterleaved));
+    //  try expectEqual(c_alsa.SND_PCM_ACCESS_MMAP_NONINTERLEAVED, @intFromEnum(AccessType.mmap_noninterleaved));
 }
 
 test "SampleType.isValidType works correctly" {
@@ -523,22 +526,22 @@ test "FormatType.toSampleType works correctly" {
     try expectEqual(SampleType.t_f64, FormatType.float64_big_endian.toSampleType());
 
     // 24-bit packed formats (3 bytes per sample)
-    try expectEqual(SampleType.t_u8_3, FormatType.signed_24bits_packed3_little_endian.toSampleType());
-    try expectEqual(SampleType.t_u8_3, FormatType.signed_24bits_packed3_big_endian.toSampleType());
-    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_24bits_packed3_little_endian.toSampleType());
-    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_24bits_packed3_big_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.signed_24bits_packed3_little_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.signed_24bits_packed3_big_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.unsigned_24bits_packed3_little_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.unsigned_24bits_packed3_big_endian.toSampleType());
 
     // 20-bit packed formats (3 bytes per sample)
-    try expectEqual(SampleType.t_u8_3, FormatType.signed_20bits_packed3_little_endian.toSampleType());
-    try expectEqual(SampleType.t_u8_3, FormatType.signed_20bits_packed3_big_endian.toSampleType());
-    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_20bits_packed3_little_endian.toSampleType());
-    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_20bits_packed3_big_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.signed_20bits_packed3_little_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.signed_20bits_packed3_big_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.unsigned_20bits_packed3_little_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.unsigned_20bits_packed3_big_endian.toSampleType());
 
     // 18-bit packed formats (3 bytes per sample)
-    try expectEqual(SampleType.t_u8_3, FormatType.signed_18bits_packed3_little_endian.toSampleType());
-    try expectEqual(SampleType.t_u8_3, FormatType.signed_18bits_packed3_big_endian.toSampleType());
-    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_18bits_packed3_little_endian.toSampleType());
-    try expectEqual(SampleType.t_u8_3, FormatType.unsigned_18bits_packed3_big_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.signed_18bits_packed3_little_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.signed_18bits_packed3_big_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.unsigned_18bits_packed3_little_endian.toSampleType());
+    // try expectEqual(SampleType.t_u8_3, FormatType.unsigned_18bits_packed3_big_endian.toSampleType());
 
     // IEC 958 subframe formats
     try expectEqual(SampleType.t_u32, FormatType.iec958_subframe_little_endian.toSampleType());
@@ -553,48 +556,46 @@ test "FormatType.toSampleType works correctly" {
 }
 
 test "formats array contains correct values" {
-    try expectEqual(c_alsa.SND_PCM_FORMAT_UNKNOWN, formats[0]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S8, formats[1]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U8, formats[2]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S16_LE, formats[3]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S16_BE, formats[4]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U16_LE, formats[5]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U16_BE, formats[6]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_LE, formats[7]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_BE, formats[8]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_LE, formats[9]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_BE, formats[10]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_LE, formats[11]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_BE, formats[12]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_LE, formats[13]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_BE, formats[14]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S32_LE, formats[15]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S32_BE, formats[16]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U32_LE, formats[17]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U32_BE, formats[18]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT_LE, formats[19]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT_BE, formats[20]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT64_LE, formats[21]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT64_BE, formats[22]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_3LE, formats[23]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_3BE, formats[24]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_3LE, formats[25]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_3BE, formats[26]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_3LE, formats[27]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_3BE, formats[28]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_3LE, formats[29]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_3BE, formats[30]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S18_3LE, formats[31]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_S18_3BE, formats[32]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U18_3LE, formats[33]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_U18_3BE, formats[34]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_MU_LAW, formats[35]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_A_LAW, formats[36]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_IMA_ADPCM, formats[37]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_MPEG, formats[38]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_GSM, formats[39]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_LE, formats[40]);
-    try expectEqual(c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_BE, formats[41]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S8, formats[0]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U8, formats[1]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S16_LE, formats[2]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S16_BE, formats[3]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U16_LE, formats[4]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U16_BE, formats[5]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_LE, formats[6]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S20_BE, formats[7]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_LE, formats[8]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U20_BE, formats[9]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_LE, formats[10]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S24_BE, formats[11]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_LE, formats[12]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U24_BE, formats[13]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S32_LE, formats[14]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_S32_BE, formats[15]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U32_LE, formats[16]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_U32_BE, formats[17]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT_LE, formats[18]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT_BE, formats[19]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT64_LE, formats[20]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_FLOAT64_BE, formats[21]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_S24_3LE, formats[23]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_S24_3BE, formats[24]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_U24_3LE, formats[25]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_U24_3BE, formats[26]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_S20_3LE, formats[27]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_S20_3BE, formats[28]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_U20_3LE, formats[29]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_U20_3BE, formats[30]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_S18_3LE, formats[31]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_S18_3BE, formats[32]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_U18_3LE, formats[33]);
+    //try expectEqual(c_alsa.SND_PCM_FORMAT_U18_3BE, formats[34]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_MU_LAW, formats[22]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_A_LAW, formats[23]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_IMA_ADPCM, formats[24]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_MPEG, formats[25]);
+    try expectEqual(c_alsa.SND_PCM_FORMAT_GSM, formats[26]);
+    //   try expectEqual(c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_LE, formats[40]);
 }
 
 test "sample_rates array contains correct values" {

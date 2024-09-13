@@ -12,7 +12,6 @@ fn callback(data: Device.AudioDataType()) void {
     const amp: f64 = @as(f64, @floatFromInt(Device.maxFormatSize())) * 0.001;
     const sr: f64 = @floatFromInt(data.sample_rate);
     const phase_inc: f64 = 2.0 * std.math.pi * freq / sr;
-
     const nb_samples = data.bufferSize() * data.channels;
 
     for (0..nb_samples) |_| {

@@ -4,6 +4,8 @@ const native_endian = @import("builtin").target.cpu.arch.endian();
 const FormatType = @import("settings.zig").FormatType;
 const Format = @import("format.zig").Format;
 
+// TODO: Expose sample as always floating point to the user.  always f32 but for float 64 audio_format where we will expose it as f64
+
 pub const AudioDataError = error{
     invalid_type,
     invalid_size,
@@ -23,6 +25,15 @@ pub fn GenericAudioData(format_type: FormatType) type {
         data: []u8,
         position: usize,
         comptime T: type = T,
+
+        // GenericAudioData will always expose sample as floats to the callers
+        // We must be mindful of the precision loss, so for 24 and 32 bits audio, we use f64 precision.
+        fn FloatType(comptime dataType: type) type {
+            return switch (dataType) {
+                f64, u32, i32 => f64,
+                else => f32,
+            };
+        }
 
         pub fn init(data: []u8, channels: u32, sample_rate: u32, format: Format(T)) Self {
             return Self{
@@ -54,6 +65,20 @@ pub fn GenericAudioData(format_type: FormatType) type {
             @memcpy(self.data[self.position .. self.position + sample_size], &bytes);
             self.position += sample_size;
         }
+
+        // maps [-1.0 - 1.0] float to the format type value and range
+        pub fn linearMapIn(sample: FloatType(T)) T {
+            const max: FloatType(T) = if (T != f32 and T != f64) @floatFromInt(std.math.maxInt(T)) else 0;
+
+            return switch (T) {
+                f32, f64 => sample,
+                u8, u16, u32 => @as(T, @intFromFloat((sample + 1.0) / 2 * max)),
+                i8, i16, i32 => @as(T, @intFromFloat(sample * max)),
+                else => @compileError("Invalid Format Type"),
+            };
+        }
+
+        //  fn linearMapOut(sample: T) FloatType() {}
 
         pub fn write(self: *Self, samples: []T) AudioDataError!void {
             for (samples) |sample| {
@@ -178,7 +203,7 @@ test "AudioData.init initializes correctly" {
         .sample_type = 0,
     };
 
-    const data = GenericAudioData(format_type).init(&buffer, channels, mockFormat);
+    const data = GenericAudioData(format_type).init(&buffer, channels, 44100, mockFormat);
 
     try testing.expectEqual(mockFormat, data.format);
     try testing.expectEqual(channels, data.channels);
@@ -187,16 +212,22 @@ test "AudioData.init initializes correctly" {
 }
 
 // Mock FormatTypes
-const signed_int_le = FormatType.signed_16bits_little_endian;
-const signed_int_be = FormatType.signed_16bits_big_endian;
+const signed_int_le = FormatType.signed_32bits_little_endian;
+const signed_int_be = FormatType.signed_32bits_big_endian;
+const signed_16_int_le = FormatType.signed_16bits_little_endian;
+const signed_16_int_be = FormatType.signed_16bits_big_endian;
 const unsigned_int_le = FormatType.unsigned_32bits_little_endian;
 const unsigned_int_be = FormatType.unsigned_32bits_big_endian;
+const unsigned_16_int_le = FormatType.unsigned_16bits_little_endian;
+const unsigned_16_int_be = FormatType.unsigned_16bits_big_endian;
 const float_le = FormatType.float64_little_endian;
 const float_be = FormatType.float64_big_endian;
+const float_32_le = FormatType.float_32bits_little_endian;
+const float_32_be = FormatType.float64_little_endian;
 
 // Mock Formats for Signed Integers (Little-Endian and Big-Endian)
-const signed_int_format_le = Format(signed_int_le.ToType()){
-    .format_type = signed_int_le,
+const signed_16_int_format_le = Format(signed_16_int_le.ToType()){
+    .format_type = signed_16_int_le,
     .signedness = .signed,
     .byte_order = .little_endian,
     .bit_depth = 16,
@@ -206,9 +237,54 @@ const signed_int_format_le = Format(signed_int_le.ToType()){
     .sample_type = 0,
 };
 
-const signed_int_format_be = Format(signed_int_be.ToType()){
-    .format_type = signed_int_be,
+const signed_16_int_format_be = Format(signed_16_int_be.ToType()){
+    .format_type = signed_16_int_be,
     .signedness = .signed,
+    .byte_order = .big_endian,
+    .bit_depth = 16,
+    .byte_rate = 2,
+    .physical_width = 16,
+    .physical_byte_rate = 2,
+    .sample_type = 0,
+};
+
+// Mock Formats for Signed Integers (Little-Endian and Big-Endian)
+const signed_int_format_le = Format(signed_int_le.ToType()){
+    .format_type = signed_16_int_le,
+    .signedness = .signed,
+    .byte_order = .little_endian,
+    .bit_depth = 32,
+    .byte_rate = 4,
+    .physical_width = 32,
+    .physical_byte_rate = 4,
+    .sample_type = 0,
+};
+
+const signed_int_format_be = Format(signed_int_be.ToType()){
+    .format_type = signed_16_int_be,
+    .signedness = .signed,
+    .byte_order = .big_endian,
+    .bit_depth = 32,
+    .byte_rate = 4,
+    .physical_width = 32,
+    .physical_byte_rate = 2,
+    .sample_type = 0,
+};
+
+const unsigned_int_16_format_le = Format(unsigned_int_le.ToType()){
+    .format_type = unsigned_int_le,
+    .signedness = .unsigned,
+    .byte_order = .little_endian,
+    .bit_depth = 16,
+    .byte_rate = 2,
+    .physical_width = 16,
+    .physical_byte_rate = 2,
+    .sample_type = 0,
+};
+
+const unsigned_int_16_format_be = Format(unsigned_int_be.ToType()){
+    .format_type = unsigned_int_be,
+    .signedness = .unsigned,
     .byte_order = .big_endian,
     .bit_depth = 16,
     .byte_rate = 2,
@@ -240,6 +316,28 @@ const unsigned_int_format_be = Format(unsigned_int_be.ToType()){
     .sample_type = 0,
 };
 
+const float_32_format_le = Format(float_32_le.ToType()){
+    .format_type = float_le,
+    .signedness = .signed, // floats are always signed
+    .byte_order = .little_endian,
+    .bit_depth = 32,
+    .byte_rate = 4,
+    .physical_width = 32,
+    .physical_byte_rate = 4,
+    .sample_type = 0,
+};
+
+const float_32_format_be = Format(float_32_be.ToType()){
+    .format_type = float_be,
+    .signedness = .signed, // floats are always signed
+    .byte_order = .big_endian,
+    .bit_depth = 32,
+    .byte_rate = 4,
+    .physical_width = 32,
+    .physical_byte_rate = 4,
+    .sample_type = 0,
+};
+
 // Mock Formats for Float (Little-Endian and Big-Endian)
 const float_format_le = Format(float_le.ToType()){
     .format_type = float_le,
@@ -263,6 +361,140 @@ const float_format_be = Format(float_be.ToType()){
     .sample_type = 0,
 };
 
+test "AudioData.linearMapIn 32 bits precision" {
+    const signed_int = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
+    const unsigned_int = if (native_endian == .little) unsigned_16_int_le else unsigned_16_int_be;
+    const float_32 = if (native_endian == .little) float_32_le else float_32_be;
+
+    const SignedAudioData = GenericAudioData(signed_int);
+    const UnsignedAudioData = GenericAudioData(unsigned_int);
+    const FloatAudioData = GenericAudioData(float_32);
+
+    const max_sample: f32 = 1.0;
+    const min_sample: f32 = -1.0;
+    const mid_sample: f32 = 0.0;
+    const one_quarter_sample: f32 = -0.5;
+    const three_quarter_sample: f32 = 0.5;
+
+    // Signed Int Samples
+    const sample_max_int: i16 = SignedAudioData.linearMapIn(max_sample);
+    const sample_min_int: i16 = SignedAudioData.linearMapIn(min_sample);
+    const sample_mid_int: i16 = SignedAudioData.linearMapIn(mid_sample);
+    const sample_one_quarter_int: i16 = SignedAudioData.linearMapIn(one_quarter_sample);
+    const sample_three_quarter_int: i16 = SignedAudioData.linearMapIn(three_quarter_sample);
+
+    // Unsigned Int Samples
+    const sample_max_uint: u16 = UnsignedAudioData.linearMapIn(max_sample);
+    const sample_min_uint: u16 = UnsignedAudioData.linearMapIn(min_sample);
+    const sample_mid_uint: u16 = UnsignedAudioData.linearMapIn(mid_sample);
+    const sample_one_quarter_uint: u16 = UnsignedAudioData.linearMapIn(one_quarter_sample);
+    const sample_three_quarter_uint: u16 = UnsignedAudioData.linearMapIn(three_quarter_sample);
+
+    // Float32 Samples
+    const sample_max_float: f32 = FloatAudioData.linearMapIn(max_sample);
+    const sample_min_float: f32 = FloatAudioData.linearMapIn(min_sample);
+    const sample_mid_float: f32 = FloatAudioData.linearMapIn(mid_sample);
+    const sample_one_quarter_float: f32 = FloatAudioData.linearMapIn(one_quarter_sample);
+    const sample_three_quarter_float: f32 = FloatAudioData.linearMapIn(three_quarter_sample);
+
+    // Signed Int Assertions
+    try std.testing.expect(sample_max_int == std.math.maxInt(i16));
+    try std.testing.expect(sample_min_int == -std.math.maxInt(i16)); // Corrected to handle two's complement
+    try std.testing.expect(sample_mid_int == 0);
+
+    // +1 because 32767 / 2 = 16383.5 and we are div flooring
+    const quarter_int_expected = -std.math.maxInt(i16) + @divFloor(std.math.maxInt(i16), 2) + 1;
+    const three_quarter_int_expected = @divFloor(std.math.maxInt(i16), 2);
+
+    try std.testing.expect(sample_one_quarter_int == quarter_int_expected);
+    try std.testing.expect(sample_three_quarter_int == three_quarter_int_expected);
+
+    // Unsigned Int Assertions
+    try std.testing.expect(sample_max_uint == std.math.maxInt(u16));
+    try std.testing.expect(sample_min_uint == 0);
+    try std.testing.expect(sample_mid_uint == std.math.maxInt(u16) / 2);
+
+    const quarter_uint_expected = std.math.maxInt(u16) / 4;
+    const three_quarter_uint_expected = (3 * std.math.maxInt(u16)) / 4;
+
+    try std.testing.expect(sample_one_quarter_uint == quarter_uint_expected);
+    try std.testing.expect(sample_three_quarter_uint == three_quarter_uint_expected);
+
+    // Float32 Assertions
+    try std.testing.expect(sample_max_float == 1.0);
+    try std.testing.expect(sample_min_float == -1.0);
+    try std.testing.expect(sample_mid_float == 0.0);
+    try std.testing.expect(sample_one_quarter_float == -0.5);
+    try std.testing.expect(sample_three_quarter_float == 0.5);
+}
+
+test "AudioData.linearMapIn 64 bits precision" {
+    const signed_int = if (native_endian == .little) signed_int_le else signed_int_be;
+    const unsigned_int = if (native_endian == .little) unsigned_int_le else unsigned_int_be;
+    const float_32 = if (native_endian == .little) float_le else float_be;
+
+    const SignedAudioData = GenericAudioData(signed_int);
+    const UnsignedAudioData = GenericAudioData(unsigned_int);
+    const FloatAudioData = GenericAudioData(float_32);
+
+    const max_sample: f64 = 1.0;
+    const min_sample: f64 = -1.0;
+    const mid_sample: f64 = 0.0;
+    const one_quarter_sample: f64 = -0.5;
+    const three_quarter_sample: f64 = 0.5;
+
+    // Signed Int Samples
+    const sample_max_int: i32 = SignedAudioData.linearMapIn(max_sample);
+    const sample_min_int: i32 = SignedAudioData.linearMapIn(min_sample);
+    const sample_mid_int: i32 = SignedAudioData.linearMapIn(mid_sample);
+    const sample_one_quarter_int: i32 = SignedAudioData.linearMapIn(one_quarter_sample);
+    const sample_three_quarter_int: i32 = SignedAudioData.linearMapIn(three_quarter_sample);
+
+    // Unsigned Int Samples
+    const sample_max_uint: u32 = UnsignedAudioData.linearMapIn(max_sample);
+    const sample_min_uint: u32 = UnsignedAudioData.linearMapIn(min_sample);
+    const sample_mid_uint: u32 = UnsignedAudioData.linearMapIn(mid_sample);
+    const sample_one_quarter_uint: u32 = UnsignedAudioData.linearMapIn(one_quarter_sample);
+    const sample_three_quarter_uint: u32 = UnsignedAudioData.linearMapIn(three_quarter_sample);
+
+    // Floats
+    const sample_max_float: f64 = FloatAudioData.linearMapIn(max_sample);
+    const sample_min_float: f64 = FloatAudioData.linearMapIn(min_sample);
+    const sample_mid_float: f64 = FloatAudioData.linearMapIn(mid_sample);
+    const sample_one_quarter_float: f64 = FloatAudioData.linearMapIn(one_quarter_sample);
+    const sample_three_quarter_float: f64 = FloatAudioData.linearMapIn(three_quarter_sample);
+
+    // Signed Int Assertions
+    try std.testing.expect(sample_max_int == std.math.maxInt(i32));
+    try std.testing.expect(sample_min_int == -std.math.maxInt(i32));
+    try std.testing.expect(sample_mid_int == 0);
+
+    // + 1 because =4,294,967,295 / 2 = 2,147,483,647.5 and we are flooring
+    const quarter_int_expected = -std.math.maxInt(i32) + @divFloor(std.math.maxInt(i32), 2) + 1;
+    const three_quarter_int_expected = @divFloor(std.math.maxInt(i32), 2);
+
+    try std.testing.expect(sample_one_quarter_int == quarter_int_expected);
+    try std.testing.expect(sample_three_quarter_int == three_quarter_int_expected);
+
+    // Unsigned Int Assertions
+    try std.testing.expect(sample_max_uint == std.math.maxInt(u32));
+    try std.testing.expect(sample_min_uint == 0);
+    try std.testing.expect(sample_mid_uint == std.math.maxInt(u32) / 2);
+
+    const quarter_uint_expected = std.math.maxInt(u32) / 4;
+    const three_quarter_uint_expected = (3 * std.math.maxInt(u32)) / 4;
+
+    try std.testing.expect(sample_one_quarter_uint == quarter_uint_expected);
+    try std.testing.expect(sample_three_quarter_uint == three_quarter_uint_expected);
+
+    // Float32 Assertions
+    try std.testing.expect(sample_max_float == 1.0);
+    try std.testing.expect(sample_min_float == -1.0);
+    try std.testing.expect(sample_mid_float == 0.0);
+    try std.testing.expect(sample_one_quarter_float == -0.5);
+    try std.testing.expect(sample_three_quarter_float == 0.5);
+}
+
 test "AudioData.write writes a single sample correctly" {
     var signed_buffer: [128]u8 = undefined;
     var unsigned_buffer: [128]u8 = undefined;
@@ -270,17 +502,17 @@ test "AudioData.write writes a single sample correctly" {
 
     const channels = 2;
 
-    const signed_int = if (native_endian == .little) signed_int_le else signed_int_be;
+    const signed_int = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
     const unsigned_int = if (native_endian == .little) unsigned_int_le else unsigned_int_be;
     const float = if (native_endian == .little) float_le else float_be;
 
-    const signed_int_format = if (native_endian == .little) signed_int_format_le else signed_int_format_be;
+    const signed_int_format = if (native_endian == .little) signed_16_int_format_le else signed_16_int_format_be;
     const unsigned_int_format = if (native_endian == .little) unsigned_int_format_le else unsigned_int_format_be;
     const float_format = if (native_endian == .little) float_format_le else float_format_be;
 
-    var signed_int_data = GenericAudioData(signed_int).init(&signed_buffer, channels, signed_int_format);
-    var unsigned_int_data = GenericAudioData(unsigned_int).init(&unsigned_buffer, channels, unsigned_int_format);
-    var float_data = GenericAudioData(float).init(&float_buffer, channels, float_format);
+    var signed_int_data = GenericAudioData(signed_int).init(&signed_buffer, channels, 44100, signed_int_format);
+    var unsigned_int_data = GenericAudioData(unsigned_int).init(&unsigned_buffer, channels, 44100, unsigned_int_format);
+    var float_data = GenericAudioData(float).init(&float_buffer, channels, 44100, float_format);
 
     const signed_sample: i16 = -12345;
     const unsigned_sample: u32 = 123456;
@@ -310,11 +542,11 @@ test "AudioData.writeSample handles endianness correctly" {
     var buffer: [128]u8 = undefined;
     const channels = 1;
 
-    const signed_int = if (native_endian == .little) signed_int_le else signed_int_be;
-    const format = if (native_endian == .little) signed_int_format_le else signed_int_format_be;
+    const signed_int = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
+    const format = if (native_endian == .little) signed_16_int_format_le else signed_16_int_format_be;
 
     // Change to big-endian format for testing
-    var data_big_endian = GenericAudioData(signed_int).init(&buffer, channels, format);
+    var data_big_endian = GenericAudioData(signed_int).init(&buffer, channels, 44100, format);
     const sample: i16 = -123;
 
     // we are swaping to simulate we have a format that is not native to our system
@@ -333,14 +565,14 @@ test "AudioData.write and read multiple samples" {
     var float_buffer: [128]u8 = undefined;
     const channels = 2;
 
-    const signed_int = if (native_endian == .little) signed_int_le else signed_int_be;
+    const signed_int = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
     const float = if (native_endian == .little) float_le else float_be;
 
-    const signed_int_format = if (native_endian == .little) signed_int_format_le else signed_int_format_be;
+    const signed_int_format = if (native_endian == .little) signed_16_int_format_le else signed_16_int_format_be;
     const float_format = if (native_endian == .little) float_format_le else float_format_be;
 
-    var signed_int_data = GenericAudioData(signed_int).init(&signed_buffer, channels, signed_int_format);
-    var float_data = GenericAudioData(float).init(&float_buffer, channels, float_format);
+    var signed_int_data = GenericAudioData(signed_int).init(&signed_buffer, channels, 44100, signed_int_format);
+    var float_data = GenericAudioData(float).init(&float_buffer, channels, 44100, float_format);
 
     var signed_samples = [_]i16{ -12345, 23456, -32768 };
     var float_samples = [_]f64{ 123456.789, -987654.321, 456789.123 };
@@ -366,13 +598,13 @@ test "AudioData.write and read multiple samples" {
 
 test "AudioData.writeSample returns out_of_bounds when writing out of buffer space" {
     const channels = 2;
-    const format_type = if (native_endian == .little) signed_int_le else signed_int_be;
-    const mock_format = if (native_endian == .little) signed_int_format_le else signed_int_format_be;
+    const format_type = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
+    const mock_format = if (native_endian == .little) signed_16_int_format_le else signed_16_int_format_be;
 
     const nb_samples = 2;
     var buffer: [nb_samples * @sizeOf(i16)]u8 = undefined;
 
-    var data = GenericAudioData(format_type).init(&buffer, channels, mock_format);
+    var data = GenericAudioData(format_type).init(&buffer, channels, 44100, mock_format);
     var samples = [_]i16{ -12345, 23456 };
 
     try data.write(&samples);
@@ -382,13 +614,13 @@ test "AudioData.writeSample returns out_of_bounds when writing out of buffer spa
 
 test "AudioData.readSample returns null when reading out of bounds" {
     const channels = 2;
-    const format_type = if (native_endian == .little) signed_int_le else signed_int_be;
-    const mock_format = if (native_endian == .little) signed_int_format_le else signed_int_format_be;
+    const format_type = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
+    const mock_format = if (native_endian == .little) signed_16_int_format_le else signed_16_int_format_be;
 
     const nb_samples = 2;
     var buffer: [nb_samples * @sizeOf(i16)]u8 = undefined;
 
-    var data = GenericAudioData(format_type).init(&buffer, channels, mock_format);
+    var data = GenericAudioData(format_type).init(&buffer, channels, 44100, mock_format);
     var samples = [_]i16{ -12345, 23456 };
 
     try data.write(&samples);
@@ -408,13 +640,13 @@ test "AudioData.readSample returns null when reading out of bounds" {
 
 test "AudioData.seek positions correctly" {
     const channels = 2;
-    const format_type = if (native_endian == .little) signed_int_le else signed_int_be;
-    const mock_format = if (native_endian == .little) signed_int_format_le else signed_int_format_be;
+    const format_type = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
+    const mock_format = if (native_endian == .little) signed_16_int_format_le else signed_16_int_format_be;
 
     const nb_samples = 4;
     var buffer: [nb_samples * @sizeOf(i16)]u8 = undefined;
 
-    var data = GenericAudioData(format_type).init(&buffer, channels, mock_format);
+    var data = GenericAudioData(format_type).init(&buffer, channels, 44100, mock_format);
     var samples = [nb_samples]i16{ -12345, 23456, -32768, 32767 };
     try data.write(&samples);
 
