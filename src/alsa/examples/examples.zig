@@ -34,13 +34,13 @@ fn callback(data: Device.AudioDataType()) void {
     }
 }
 
-pub fn creatingDevice() void {
+pub fn playbackSineWave() void {
     var dev = Device.init(.{
         .sample_rate = .sr_44k100hz,
         .channels = .stereo,
         .stream_type = .playback,
         .buffer_size = .bz_1024,
-        .ident = "hw:0,0",
+        .ident = "hw:3,0",
     }) catch |err| {
         std.debug.print("Failed to init device: {any}", .{err});
         return;
@@ -53,6 +53,25 @@ pub fn creatingDevice() void {
     dev.start(callback) catch |err| {
         std.debug.print("Failed to start device: {any}", .{err});
     };
+}
+
+pub fn printingHardwareInfo() void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
+
+    const allocator = gpa.allocator();
+
+    // hardware holds information about your system's audio cards and ports
+    var hardware = alsa.Hardware.init(allocator) catch |err| {
+        std.debug.print("Failed to initialize hardware: {}", .{err});
+        return;
+    };
+
+    defer hardware.deinit();
+
+    // To have an overview of the available audio cards, ports as well as their supported settings
+    // you can just print the hardware object
+    std.debug.print("{s}", .{hardware});
 }
 
 // This example shows how to use the hardware object to initialize a device

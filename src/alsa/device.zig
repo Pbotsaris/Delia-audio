@@ -212,8 +212,16 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
             // always mode none for now
             var err = c_alsa.snd_pcm_open(&pcm_handle, opts.ident.ptr, @intFromEnum(opts.stream_type), @intFromEnum(Mode.none));
             if (err < 0) {
-                log.err("Failed to open PCM for StreamType: {s}, Mode: none: {s}", .{ @tagName(AccessType.mmap_interleaved), c_alsa.snd_strerror(err) });
-                return DeviceHardwareError.open_stream;
+                log.warn("Failed to open PCM for ident '{s}': '{s}'. Attempting default...", .{ opts.ident, c_alsa.snd_strerror(err) });
+
+                err = c_alsa.snd_pcm_open(&pcm_handle, "default", @intFromEnum(opts.stream_type), @intFromEnum(Mode.none));
+
+                if (err < 0) {
+                    log.err("Failed to open PCM for ident 'default': '{s}'", .{c_alsa.snd_strerror(err)});
+                    return DeviceHardwareError.open_stream;
+                }
+
+                log.info("Successfully opened PCM for ident 'default'", .{});
             }
 
             errdefer {
@@ -337,9 +345,7 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
         ///
         /// - `strategy`: Specifies the data transfer strategy to be used.
         ///   - `Strategy.period_event`:
-        ///     - Sets `avail_min` to the hardware buffer size and enables period events. This
-        ///       causes the ALSA hardware to trigger an interrupt after each period is processed,
-        ///       reducing CPU usage.
+        ///      # TODO
         ///   - `Strategy.min_available`:
         ///     - Sets `avail_min` to the size of the period buffer, meaning the application will
         ///       handle data transfer when there is enough space in the buffer for a full period.
@@ -451,17 +457,14 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
             return *const fn (*GenericAudioData(format_type)) void;
         }
 
-        const AsyncData = struct {
-            samples: []format_type.ToType() = undefined,
-            areas: ?*c_alsa.snd_pcm_channel_area_t = null,
-        };
-
         // configuration for xrun recovery retries
         const MAX_RETRY = 5;
         const MILLISECONDS = 1_000_000; // 1ms
         const SLEEP_INCREMENT = 1.2;
         //--
 
+        // if we have 5 consecutive zero transfers we will consider it an xrun
+        const MAX_ZERO_TRANSFERS = 5;
         const BYTE_ALIGN = 8;
 
         device: GenericDevice(format_type),
@@ -492,6 +495,7 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
             const buffer_size: c_ulong = @intFromEnum(self.device.buffer_size);
             var maybe_areas: ?*c_alsa.snd_pcm_channel_area_t = null;
             var stopped: bool = true;
+            var zero_transfers: usize = 0;
 
             while (self.running) {
                 const state: c_uint = c_alsa.snd_pcm_state(self.device.pcm_handle);
@@ -586,6 +590,14 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
                     if (frames_actually_transfered < 0) {
                         try self.xrunRecovery(@intCast(frames_actually_transfered));
                     } else if (frames_actually_transfered != expected_to_transfer) try self.xrunRecovery(-c_alsa.EPIPE);
+
+                    if (frames_actually_transfered == 0) zero_transfers += 1 else zero_transfers = 0;
+
+                    if (zero_transfers >= MAX_ZERO_TRANSFERS) {
+                        log.err("Too many consecutive zero transfers. Stopping device.", .{});
+                        stopped = true;
+                        return AudioLoopError.xrun;
+                    }
 
                     to_transfer -= @as(c_ulong, @intCast(frames_actually_transfered));
                 }

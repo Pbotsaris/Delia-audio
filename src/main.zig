@@ -9,7 +9,8 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    examples.creatingDevice();
+    // examples.printingHardwareInfo();
+    examples.playbackSineWave();
 }
 
 test {
