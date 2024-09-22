@@ -9,6 +9,7 @@ const Format = @import("format.zig").Format;
 pub const AudioDataError = error{
     invalid_type,
     invalid_size,
+    invalid_float_range,
     out_of_bounds,
     unexpected_buffer_size,
 };
@@ -28,8 +29,8 @@ pub fn GenericAudioData(format_type: FormatType) type {
 
         // GenericAudioData will always expose sample as floats to the callers
         // We must be mindful of the precision loss, so for 24 and 32 bits audio, we use f64 precision.
-        fn FloatType(comptime dataType: type) type {
-            return switch (dataType) {
+        fn FloatType() type {
+            return switch (T) {
                 f64, u32, i32 => f64,
                 else => f32,
             };
@@ -67,18 +68,29 @@ pub fn GenericAudioData(format_type: FormatType) type {
         }
 
         // maps [-1.0 - 1.0] float to the format type value and range
-        pub fn linearMapIn(sample: FloatType(T)) T {
-            const max: FloatType(T) = if (T != f32 and T != f64) @floatFromInt(std.math.maxInt(T)) else 0;
+        pub fn linearMapIn(sample: FloatType()) T {
+            const max: FloatType() = if (T != f32 and T != f64) @floatFromInt(std.math.maxInt(T)) else 0.0;
 
             return switch (T) {
                 f32, f64 => sample,
-                u8, u16, u32 => @as(T, @intFromFloat((sample + 1.0) / 2 * max)),
+                u8, u16, u32 => @as(T, @intFromFloat((sample + 1.0) / 2.0 * max)),
                 i8, i16, i32 => @as(T, @intFromFloat(sample * max)),
-                else => @compileError("Invalid Format Type"),
+                else => @compileError("Invalid AudioData Format Type"),
             };
         }
 
-        //  fn linearMapOut(sample: T) FloatType() {}
+        fn linearMapOut(sample: T) FloatType() {
+            const max: FloatType() = if (T != f32 and T != f64) @floatFromInt(std.math.maxInt(T) + 1) else 0.0;
+
+            std.debug.print("MAX: {d}\n", .{max});
+
+            return switch (T) {
+                f32, f64 => sample,
+                i8, i16, i32 => return @as(FloatType(), @floatFromInt(sample)) / max,
+                u8, u16, u32 => return (@as(FloatType(), @floatFromInt(sample)) / max * 2.0) - 1.0,
+                else => @compileError("Invalid AudioData Format Type"),
+            };
+        }
 
         pub fn write(self: *Self, samples: []T) AudioDataError!void {
             for (samples) |sample| {
@@ -493,6 +505,37 @@ test "AudioData.linearMapIn 64 bits precision" {
     try std.testing.expect(sample_mid_float == 0.0);
     try std.testing.expect(sample_one_quarter_float == -0.5);
     try std.testing.expect(sample_three_quarter_float == 0.5);
+}
+
+test "AudioData.linearMapOut 32 bits precision" {
+    const signed_int = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
+    //   const unsigned_int = if (native_endian == .little) unsigned_16_int_le else unsigned_16_int_be;
+    //  const float_32 = if (native_endian == .little) float_32_le else float_32_be;
+
+    const SignedAudioData = GenericAudioData(signed_int);
+    // const UnsignedAudioData = GenericAudioData(unsigned_int);
+    // const FloatAudioData = GenericAudioData(float_32);
+
+    // look int othe asymetre of the ints, probably need to revise how the mapping is being calculated
+    // and the maxInt how is used
+    const signed_int_max: i16 = std.math.maxInt(i16);
+    const signed_int_min: i16 = -std.math.maxInt(i16);
+    const signed_int_quarter: i16 = -std.math.maxInt(i16) + @divFloor(std.math.maxInt(i16), 2);
+
+    std.debug.print("signed_int_quarter: {d}\n", .{signed_int_quarter});
+
+    const sample_int_max = SignedAudioData.linearMapOut(signed_int_max);
+    const sample_int_min = SignedAudioData.linearMapOut(signed_int_min);
+    const sample_int_mid = SignedAudioData.linearMapOut(0);
+    const sample_int_quarter = SignedAudioData.linearMapOut(signed_int_quarter);
+
+    try testing.expect(sample_int_max == 1.0);
+    try testing.expect(sample_int_min == -1.0);
+    try testing.expect(sample_int_mid == 0.0);
+    try testing.expectApproxEqRel(sample_int_quarter, -0.5, 0.0001);
+    // try testing.expect(sample_int_quarter == -0.5);
+
+    std.debug.print("Sample int quarter: {d}\n", .{sample_int_quarter});
 }
 
 test "AudioData.write writes a single sample correctly" {
