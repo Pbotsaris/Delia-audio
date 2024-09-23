@@ -46,7 +46,7 @@ pub fn GenericAudioData(format_type: FormatType) type {
             };
         }
 
-        pub fn writeSample(self: *Self, sample: T) AudioDataError!void {
+        pub fn writeSample(self: *Self, sample: FloatType()) AudioDataError!void {
             const sample_size = @sizeOf(T);
 
             if (sample_size != self.format.byte_rate) {
@@ -60,15 +60,88 @@ pub fn GenericAudioData(format_type: FormatType) type {
 
             switch (T) {
                 f32, f64 => writeFloat(&bytes, sample, endianness),
-                else => std.mem.writeInt(T, &bytes, sample, endianness),
+                else => std.mem.writeInt(T, &bytes, linearMapIn(sample), endianness),
             }
 
             @memcpy(self.data[self.position .. self.position + sample_size], &bytes);
             self.position += sample_size;
         }
 
+        pub fn write(self: *Self, samples: []FloatType()) AudioDataError!void {
+            for (samples) |sample| {
+                try writeSample(self, sample);
+            }
+        }
+
+        pub fn readSample(self: *Self) ?FloatType() {
+            if (self.data.len == 0) return null;
+            if (self.position >= self.data.len) return null;
+
+            const actual_sample_size: usize = @sizeOf(T);
+
+            var sample_buffer: [actual_sample_size]u8 = undefined;
+            @memcpy(&sample_buffer, self.data[self.position .. self.position + actual_sample_size]);
+
+            const endianness: std.builtin.Endian = if (self.format.byte_order == .big_endian) .big else .little;
+
+            const sample: T = switch (T) {
+                f32, f64 => readFloat(&sample_buffer, endianness),
+                else => linearMapOut(std.mem.readInt(T, &sample_buffer, endianness)),
+            };
+
+            self.position += actual_sample_size;
+
+            return sample;
+        }
+
+        pub fn readAllAlloc(self: *Self, allocator: std.mem.Allocator) !?[]FloatType() {
+            if (self.data.len == 0) return null;
+            if (self.position >= self.data.len) return null;
+
+            const sample_size_as_float = @sizeOf(FloatType());
+            const actual_sample_size = @sizeOf(T);
+
+            // if the sample size is not a multiple of the data length, there is a bug. It should never happen
+            if (self.data.len % actual_sample_size != 0) {
+                return AudioDataError.unexpected_buffer_size;
+            }
+
+            const samples_len = @divFloor(self.data.len, sample_size_as_float);
+            var samples = try allocator.alloc(FloatType(), samples_len);
+
+            for (0..samples_len) |sample_index| {
+                const sample: FloatType() = self.readSample() orelse return samples;
+                samples[sample_index] = sample;
+            }
+
+            return samples;
+        }
+
+        pub fn rewind(self: *Self) void {
+            self.position = 0;
+        }
+
+        pub fn bufferSize(self: Self) usize {
+            return @divFloor(self.data.len, @sizeOf(T));
+        }
+
+        pub fn totalSameCount(self: Self) usize {
+            return self.bufferSize() * self.channels;
+        }
+
+        pub fn seek(self: *Self, sample_position: usize) !void {
+            const sample_size = @sizeOf(T);
+            const new_position = sample_position * sample_size;
+
+            if (new_position >= self.data.len) {
+                return AudioDataError.out_of_bounds;
+            }
+
+            self.position = new_position;
+        }
+
         // maps [-1.0 - 1.0] float to the format type value and range
-        pub fn linearMapIn(sample: FloatType()) T {
+        fn linearMapIn(sample: FloatType()) T {
             const max: FloatType() = if (T != f32 and T != f64) @floatFromInt(std.math.maxInt(T)) else 0.0;
             const signed_max = if (sample > 0) max else max + 1.0;
 
@@ -90,74 +163,6 @@ pub fn GenericAudioData(format_type: FormatType) type {
                 u8, u16, u32 => return (@as(FloatType(), @floatFromInt(sample)) / max * 2.0) - 1.0,
                 else => @compileError("Invalid AudioData Format Type"),
             };
-        }
-
-        pub fn write(self: *Self, samples: []T) AudioDataError!void {
-            for (samples) |sample| {
-                try writeSample(self, sample);
-            }
-        }
-
-        pub fn readSample(self: *Self) ?T {
-            if (self.data.len == 0) return null;
-            if (self.position >= self.data.len) return null;
-
-            const sample_size: usize = @sizeOf(T);
-
-            var sample_buffer: [sample_size]u8 = undefined;
-            @memcpy(&sample_buffer, self.data[self.position .. self.position + sample_size]);
-
-            const endianness: std.builtin.Endian = if (self.format.byte_order == .big_endian) .big else .little;
-
-            const sample: T = switch (T) {
-                f32, f64 => readFloat(&sample_buffer, endianness),
-                else => std.mem.readInt(T, &sample_buffer, endianness),
-            };
-
-            self.position += sample_size;
-
-            return sample;
-        }
-
-        pub fn readAllAlloc(self: *Self, allocator: std.mem.Allocator) !?[]T {
-            if (self.data.len == 0) return null;
-            if (self.position >= self.data.len) return null;
-
-            const sample_size = @sizeOf(T);
-
-            // if the sample size is not a multiple of the data length, there is a bug. It should never happen
-            if (self.data.len % sample_size != 0) {
-                return AudioDataError.unexpected_buffer_size;
-            }
-
-            const samples_len = @divFloor(self.data.len, sample_size);
-            var samples = try allocator.alloc(T, samples_len);
-
-            for (0..samples_len) |sample_index| {
-                const sample: T = self.readSample() orelse return samples;
-                samples[sample_index] = sample;
-            }
-
-            return samples;
-        }
-
-        pub fn rewind(self: *Self) void {
-            self.position = 0;
-        }
-
-        pub fn bufferSize(self: Self) usize {
-            return @divFloor(self.data.len, @sizeOf(T));
-        }
-
-        pub fn seek(self: *Self, sample_position: usize) !void {
-            const sample_size = @sizeOf(T);
-            const new_position = sample_position * sample_size;
-
-            if (new_position >= self.data.len) {
-                return AudioDataError.out_of_bounds;
-            }
-
-            self.position = new_position;
         }
 
         fn hasSpace(self: Self, sample_size: i32) bool {

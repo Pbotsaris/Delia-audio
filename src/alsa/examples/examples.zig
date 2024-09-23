@@ -5,20 +5,16 @@ const alsa = @import("../alsa.zig");
 const Device = alsa.device.GenericDevice(.signed_16bits_little_endian);
 
 // testing with a simple sine wave
-var phase: f64 = 0.0;
+var phase: f32 = 0.0;
 
 fn callback(data: Device.AudioDataType()) void {
-    const freq: f64 = 400.0;
-    const amp: f64 = @as(f64, @floatFromInt(Device.maxFormatSize())) * 0.001;
-    const sr: f64 = @floatFromInt(data.sample_rate);
-    const phase_inc: f64 = 2.0 * std.math.pi * freq / sr;
-    const nb_samples = data.bufferSize() * data.channels;
+    const freq: f32 = 400.0;
+    const amp: f32 = 0.001;
+    const sr: f32 = @floatFromInt(data.sample_rate);
+    const phase_inc: f32 = 2.0 * std.math.pi * freq / sr;
 
-    for (0..nb_samples) |_| {
-        const sample = switch (data.T) {
-            f32, f64 => @as(data.T, @floatCast(amp * std.math.sin(phase))),
-            else => @as(data.T, @intFromFloat(amp * std.math.sin(phase))),
-        };
+    for (0..data.totalSameCount()) |_| {
+        const sample = amp * std.math.sin(phase);
 
         for (0..data.channels) |_| {
             data.writeSample(sample) catch {
@@ -36,10 +32,10 @@ fn callback(data: Device.AudioDataType()) void {
 
 pub fn playbackSineWave() void {
     var dev = Device.init(.{
-        .sample_rate = .sr_44k100hz,
+        .sample_rate = .sr_48khz,
         .channels = .stereo,
         .stream_type = .playback,
-        .buffer_size = .bz_1024,
+        .buffer_size = .bz_512,
         .ident = "hw:3,0",
     }) catch |err| {
         std.debug.print("Failed to init device: {any}", .{err});

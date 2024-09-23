@@ -41,7 +41,7 @@ pub const Strategy = enum {
 
 pub const BufferSize = enum(u32) {
     bz_216 = 216,
-    bz_521 = 512,
+    bz_512 = 512,
     bz_1024 = 1024,
     bz_2048 = 2048,
     bz_4096 = 4096,
