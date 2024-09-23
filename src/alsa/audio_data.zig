@@ -70,23 +70,23 @@ pub fn GenericAudioData(format_type: FormatType) type {
         // maps [-1.0 - 1.0] float to the format type value and range
         pub fn linearMapIn(sample: FloatType()) T {
             const max: FloatType() = if (T != f32 and T != f64) @floatFromInt(std.math.maxInt(T)) else 0.0;
+            const signed_max = if (sample > 0) max else max + 1.0;
 
             return switch (T) {
                 f32, f64 => sample,
+                i8, i16, i32 => @as(T, @intFromFloat(sample * signed_max)),
                 u8, u16, u32 => @as(T, @intFromFloat((sample + 1.0) / 2.0 * max)),
-                i8, i16, i32 => @as(T, @intFromFloat(sample * max)),
                 else => @compileError("Invalid AudioData Format Type"),
             };
         }
 
         fn linearMapOut(sample: T) FloatType() {
-            const max: FloatType() = if (T != f32 and T != f64) @floatFromInt(std.math.maxInt(T) + 1) else 0.0;
-
-            std.debug.print("MAX: {d}\n", .{max});
+            const max: FloatType() = if (T != f32 and T != f64) @floatFromInt(std.math.maxInt(T)) else 0.0;
+            const signed_max = if (sample > 0) max else max + 1.0;
 
             return switch (T) {
                 f32, f64 => sample,
-                i8, i16, i32 => return @as(FloatType(), @floatFromInt(sample)) / max,
+                i8, i16, i32 => return @as(FloatType(), @floatFromInt(sample)) / signed_max,
                 u8, u16, u32 => return (@as(FloatType(), @floatFromInt(sample)) / max * 2.0) - 1.0,
                 else => @compileError("Invalid AudioData Format Type"),
             };
@@ -410,34 +410,34 @@ test "AudioData.linearMapIn 32 bits precision" {
     const sample_three_quarter_float: f32 = FloatAudioData.linearMapIn(three_quarter_sample);
 
     // Signed Int Assertions
-    try std.testing.expect(sample_max_int == std.math.maxInt(i16));
-    try std.testing.expect(sample_min_int == -std.math.maxInt(i16)); // Corrected to handle two's complement
-    try std.testing.expect(sample_mid_int == 0);
+    try std.testing.expectEqual(std.math.maxInt(i16), sample_max_int);
+    try std.testing.expectEqual(-std.math.maxInt(i16) - 1, sample_min_int); // Corrected to handle two's complement
+    try std.testing.expectEqual(0, sample_mid_int);
 
-    // +1 because 32767 / 2 = 16383.5 and we are div flooring
-    const quarter_int_expected = -std.math.maxInt(i16) + @divFloor(std.math.maxInt(i16), 2) + 1;
+    // -1 and +1 to correct the two's complement asymmetry
+    const quarter_int_expected = (-std.math.maxInt(i16) - 1) + @divFloor(std.math.maxInt(i16) + 1, 2);
     const three_quarter_int_expected = @divFloor(std.math.maxInt(i16), 2);
 
-    try std.testing.expect(sample_one_quarter_int == quarter_int_expected);
-    try std.testing.expect(sample_three_quarter_int == three_quarter_int_expected);
+    try std.testing.expectEqual(quarter_int_expected, sample_one_quarter_int);
+    try std.testing.expectEqual(three_quarter_int_expected, sample_three_quarter_int);
 
     // Unsigned Int Assertions
-    try std.testing.expect(sample_max_uint == std.math.maxInt(u16));
-    try std.testing.expect(sample_min_uint == 0);
-    try std.testing.expect(sample_mid_uint == std.math.maxInt(u16) / 2);
+    try std.testing.expectEqual(sample_max_uint, std.math.maxInt(u16));
+    try std.testing.expectEqual(sample_min_uint, 0);
+    try std.testing.expectEqual(sample_mid_uint, std.math.maxInt(u16) / 2);
 
     const quarter_uint_expected = std.math.maxInt(u16) / 4;
     const three_quarter_uint_expected = (3 * std.math.maxInt(u16)) / 4;
 
-    try std.testing.expect(sample_one_quarter_uint == quarter_uint_expected);
-    try std.testing.expect(sample_three_quarter_uint == three_quarter_uint_expected);
+    try std.testing.expectEqual(quarter_uint_expected, sample_one_quarter_uint);
+    try std.testing.expectEqual(three_quarter_uint_expected, sample_three_quarter_uint);
 
     // Float32 Assertions
-    try std.testing.expect(sample_max_float == 1.0);
-    try std.testing.expect(sample_min_float == -1.0);
-    try std.testing.expect(sample_mid_float == 0.0);
-    try std.testing.expect(sample_one_quarter_float == -0.5);
-    try std.testing.expect(sample_three_quarter_float == 0.5);
+    try std.testing.expectEqual(1.0, sample_max_float);
+    try std.testing.expectEqual(-1.0, sample_min_float);
+    try std.testing.expectEqual(0.0, sample_mid_float);
+    try std.testing.expectEqual(-0.5, sample_one_quarter_float);
+    try std.testing.expectEqual(0.5, sample_three_quarter_float);
 }
 
 test "AudioData.linearMapIn 64 bits precision" {
@@ -477,65 +477,161 @@ test "AudioData.linearMapIn 64 bits precision" {
     const sample_three_quarter_float: f64 = FloatAudioData.linearMapIn(three_quarter_sample);
 
     // Signed Int Assertions
-    try std.testing.expect(sample_max_int == std.math.maxInt(i32));
-    try std.testing.expect(sample_min_int == -std.math.maxInt(i32));
-    try std.testing.expect(sample_mid_int == 0);
+    try std.testing.expectEqual(std.math.maxInt(i32), sample_max_int);
+    try std.testing.expectEqual(-std.math.maxInt(i32) - 1, sample_min_int);
+    try std.testing.expectEqual(0, sample_mid_int);
 
-    // + 1 because =4,294,967,295 / 2 = 2,147,483,647.5 and we are flooring
-    const quarter_int_expected = -std.math.maxInt(i32) + @divFloor(std.math.maxInt(i32), 2) + 1;
+    //  -1 and +1 to correct the two's complement asymmetry
+    const quarter_int_expected = (-std.math.maxInt(i32) - 1) + @divFloor(std.math.maxInt(i32) + 1, 2);
     const three_quarter_int_expected = @divFloor(std.math.maxInt(i32), 2);
 
-    try std.testing.expect(sample_one_quarter_int == quarter_int_expected);
-    try std.testing.expect(sample_three_quarter_int == three_quarter_int_expected);
+    try std.testing.expectEqual(sample_one_quarter_int, quarter_int_expected);
+    try std.testing.expectEqual(sample_three_quarter_int, three_quarter_int_expected);
 
     // Unsigned Int Assertions
-    try std.testing.expect(sample_max_uint == std.math.maxInt(u32));
-    try std.testing.expect(sample_min_uint == 0);
-    try std.testing.expect(sample_mid_uint == std.math.maxInt(u32) / 2);
+    try std.testing.expectEqual(std.math.maxInt(u32), sample_max_uint);
+    try std.testing.expectEqual(0, sample_min_uint);
+    try std.testing.expectEqual(std.math.maxInt(u32) / 2, sample_mid_uint);
 
     const quarter_uint_expected = std.math.maxInt(u32) / 4;
     const three_quarter_uint_expected = (3 * std.math.maxInt(u32)) / 4;
 
-    try std.testing.expect(sample_one_quarter_uint == quarter_uint_expected);
-    try std.testing.expect(sample_three_quarter_uint == three_quarter_uint_expected);
+    try std.testing.expectEqual(sample_one_quarter_uint, quarter_uint_expected);
+    try std.testing.expectEqual(three_quarter_uint_expected, sample_three_quarter_uint);
 
     // Float32 Assertions
-    try std.testing.expect(sample_max_float == 1.0);
-    try std.testing.expect(sample_min_float == -1.0);
-    try std.testing.expect(sample_mid_float == 0.0);
-    try std.testing.expect(sample_one_quarter_float == -0.5);
-    try std.testing.expect(sample_three_quarter_float == 0.5);
+    try std.testing.expectEqual(1.0, sample_max_float);
+    try std.testing.expectEqual(-1.0, sample_min_float);
+    try std.testing.expectEqual(0.0, sample_mid_float);
+    try std.testing.expectEqual(-0.5, sample_one_quarter_float);
+    try std.testing.expectEqual(0.5, sample_three_quarter_float);
 }
 
 test "AudioData.linearMapOut 32 bits precision" {
     const signed_int = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
-    //   const unsigned_int = if (native_endian == .little) unsigned_16_int_le else unsigned_16_int_be;
-    //  const float_32 = if (native_endian == .little) float_32_le else float_32_be;
+    const unsigned_int = if (native_endian == .little) unsigned_16_int_le else unsigned_16_int_be;
+    const float_32 = if (native_endian == .little) float_32_le else float_32_be;
 
     const SignedAudioData = GenericAudioData(signed_int);
-    // const UnsignedAudioData = GenericAudioData(unsigned_int);
-    // const FloatAudioData = GenericAudioData(float_32);
+    const UnsignedAudioData = GenericAudioData(unsigned_int);
+    const FloatAudioData = GenericAudioData(float_32);
 
     // look int othe asymetre of the ints, probably need to revise how the mapping is being calculated
     // and the maxInt how is used
     const signed_int_max: i16 = std.math.maxInt(i16);
-    const signed_int_min: i16 = -std.math.maxInt(i16);
+    const signed_int_min: i16 = -std.math.maxInt(i16) - 1; // need to add 1 to handle two's complement
     const signed_int_quarter: i16 = -std.math.maxInt(i16) + @divFloor(std.math.maxInt(i16), 2);
+    const signed_int_three_quarter: i16 = @divFloor(std.math.maxInt(i16), 2);
 
-    std.debug.print("signed_int_quarter: {d}\n", .{signed_int_quarter});
+    const unsigned_int_max: u16 = std.math.maxInt(u16);
+    const unsigned_int_mid: u16 = @divFloor(std.math.maxInt(u16), 2);
+    const unsigned_int_quarter: u16 = @divFloor(std.math.maxInt(u16), 4);
+    const unsigned_int_three_quarter: u16 = unsigned_int_quarter * 3;
 
     const sample_int_max = SignedAudioData.linearMapOut(signed_int_max);
     const sample_int_min = SignedAudioData.linearMapOut(signed_int_min);
     const sample_int_mid = SignedAudioData.linearMapOut(0);
     const sample_int_quarter = SignedAudioData.linearMapOut(signed_int_quarter);
+    const sample_int_three_quarter = SignedAudioData.linearMapOut(signed_int_three_quarter);
 
-    try testing.expect(sample_int_max == 1.0);
-    try testing.expect(sample_int_min == -1.0);
-    try testing.expect(sample_int_mid == 0.0);
-    try testing.expectApproxEqRel(sample_int_quarter, -0.5, 0.0001);
-    // try testing.expect(sample_int_quarter == -0.5);
+    const sample_uint_max = UnsignedAudioData.linearMapOut(unsigned_int_max);
+    const sample_uint_min = UnsignedAudioData.linearMapOut(0);
+    const sample_uint_mid = UnsignedAudioData.linearMapOut(unsigned_int_mid);
+    const sample_uint_quarter = UnsignedAudioData.linearMapOut(unsigned_int_quarter);
+    const sample_uint_three_quarter = UnsignedAudioData.linearMapOut(unsigned_int_three_quarter);
 
-    std.debug.print("Sample int quarter: {d}\n", .{sample_int_quarter});
+    const sample_float_max = FloatAudioData.linearMapOut(1.0);
+    const sample_float_min = FloatAudioData.linearMapOut(-1.0);
+    const sample_float_mid = FloatAudioData.linearMapOut(0.0);
+    const sample_float_quarter = FloatAudioData.linearMapOut(-0.5);
+    const sample_float_three_quarter = FloatAudioData.linearMapOut(0.5);
+
+    try testing.expectEqual(1.0, sample_int_max);
+    try testing.expectEqual(-1.0, sample_int_min);
+    try testing.expectEqual(0.0, sample_int_mid);
+    try testing.expectEqual(-0.5, sample_int_quarter);
+
+    // this is a rounding error for signed 16 bits as maxInt(i16) = 32767 and
+    // three quarter in or 0.5 would map to 32767 / 2 = 16383.5 which cannot really be represented
+    // as an integer
+    try testing.expectEqual(4.9998474e-1, sample_int_three_quarter);
+
+    try testing.expectEqual(1.0, sample_uint_max);
+    try testing.expectEqual(-1.0, sample_uint_min);
+
+    // Similarly to signed ints, maxInt(u16) = 65535 and mid = 32767.5 which cannot be represented as an integer
+    // the quarter and three quarter are also rounded to the nearest integer
+    try testing.expectEqual(-1.5258789e-5, sample_uint_mid);
+    try testing.expectEqual(-5.000229e-1, sample_uint_quarter);
+    try testing.expectEqual(4.9993134e-1, sample_uint_three_quarter);
+
+    try testing.expectEqual(1.0, sample_float_max);
+    try testing.expectEqual(-1.0, sample_float_min);
+    try testing.expectEqual(0.0, sample_float_mid);
+    try testing.expectEqual(-0.5, sample_float_quarter);
+    try testing.expectEqual(0.5, sample_float_three_quarter);
+}
+
+test "AudioData.linearMapOut 64 bits precision" {
+    const signed_int = if (native_endian == .little) signed_int_le else signed_int_be;
+    const unsigned_int = if (native_endian == .little) unsigned_int_le else unsigned_int_be;
+    const float = if (native_endian == .little) float_le else float_be;
+
+    const SignedAudioData = GenericAudioData(signed_int);
+    const UnsignedAudioData = GenericAudioData(unsigned_int);
+    const FloatAudioData = GenericAudioData(float);
+
+    // look int othe asymetre of the ints, probably need to revise how the mapping is being calculated
+    // and the maxInt how is used
+    const signed_int_max: i32 = std.math.maxInt(i32);
+    const signed_int_min: i32 = -std.math.maxInt(i32) - 1; // need to add 1 to handle two's complement
+    const signed_int_quarter: i32 = -std.math.maxInt(i32) + @divFloor(std.math.maxInt(i32), 2);
+    const signed_int_three_quarter: i32 = @divFloor(std.math.maxInt(i32), 2);
+
+    const unsigned_int_max: u32 = std.math.maxInt(u32);
+    const unsigned_int_mid: u32 = @divFloor(std.math.maxInt(u32), 2);
+    const unsigned_int_quarter: u32 = @divFloor(std.math.maxInt(u32), 4);
+    const unsigned_int_three_quarter: u32 = unsigned_int_quarter * 3;
+
+    const sample_int_max = SignedAudioData.linearMapOut(signed_int_max);
+    const sample_int_min = SignedAudioData.linearMapOut(signed_int_min);
+    const sample_int_mid = SignedAudioData.linearMapOut(0);
+    const sample_int_quarter = SignedAudioData.linearMapOut(signed_int_quarter);
+    const sample_int_three_quarter = SignedAudioData.linearMapOut(signed_int_three_quarter);
+
+    const sample_uint_max = UnsignedAudioData.linearMapOut(unsigned_int_max);
+    const sample_uint_min = UnsignedAudioData.linearMapOut(0);
+    const sample_uint_mid = UnsignedAudioData.linearMapOut(unsigned_int_mid);
+    const sample_uint_quarter = UnsignedAudioData.linearMapOut(unsigned_int_quarter);
+    const sample_uint_three_quarter = UnsignedAudioData.linearMapOut(unsigned_int_three_quarter);
+
+    const sample_float_max = FloatAudioData.linearMapOut(1.0);
+    const sample_float_min = FloatAudioData.linearMapOut(-1.0);
+    const sample_float_mid = FloatAudioData.linearMapOut(0.0);
+    const sample_float_quarter = FloatAudioData.linearMapOut(-0.5);
+    const sample_float_three_quarter = FloatAudioData.linearMapOut(0.5);
+
+    try testing.expectEqual(1.0, sample_int_max);
+    try testing.expectEqual(-1.0, sample_int_min);
+    try testing.expectEqual(0.0, sample_int_mid);
+    try testing.expectEqual(-0.5, sample_int_quarter);
+
+    //  similar to the 16 bits precission, the three quarter is rounded to the nearest integer
+    try testing.expectEqual(4.9999999976716936e-1, sample_int_three_quarter);
+
+    try testing.expectEqual(1.0, sample_uint_max);
+    try testing.expectEqual(-1.0, sample_uint_min);
+
+    //  similar to the 16 bits precission, rounded to the nearest integer
+    try testing.expectEqual(-2.3283064365386963e-10, sample_uint_mid);
+    try testing.expectEqual(-5.00000000349246e-1, sample_uint_quarter);
+    try testing.expectEqual(4.999999989522621e-1, sample_uint_three_quarter);
+
+    try testing.expectEqual(1.0, sample_float_max);
+    try testing.expectEqual(-1.0, sample_float_min);
+    try testing.expectEqual(0.0, sample_float_mid);
+    try testing.expectEqual(-0.5, sample_float_quarter);
+    try testing.expectEqual(0.5, sample_float_three_quarter);
 }
 
 test "AudioData.write writes a single sample correctly" {
