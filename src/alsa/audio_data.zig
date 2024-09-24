@@ -84,7 +84,7 @@ pub fn GenericAudioData(format_type: FormatType) type {
 
             const endianness: std.builtin.Endian = if (self.format.byte_order == .big_endian) .big else .little;
 
-            const sample: T = switch (T) {
+            const sample: FloatType() = switch (T) {
                 f32, f64 => readFloat(&sample_buffer, endianness),
                 else => linearMapOut(std.mem.readInt(T, &sample_buffer, endianness)),
             };
@@ -658,8 +658,8 @@ test "AudioData.write writes a single sample correctly" {
     var unsigned_int_data = GenericAudioData(unsigned_int).init(&unsigned_buffer, channels, 44100, unsigned_int_format);
     var float_data = GenericAudioData(float).init(&float_buffer, channels, 44100, float_format);
 
-    const signed_sample: i16 = -12345;
-    const unsigned_sample: u32 = 123456;
+    const signed_sample: f32 = 1.0;
+    const unsigned_sample: f64 = -1.0;
     const float_sample: f64 = 123456.789;
 
     try signed_int_data.writeSample(signed_sample);
@@ -672,10 +672,10 @@ test "AudioData.write writes a single sample correctly" {
     try float_data.writeSample(float_sample);
     float_data.rewind();
 
-    const signed_written_sample: i16 = signed_int_data.readSample() orelse 0;
+    const signed_written_sample: f32 = signed_int_data.readSample() orelse 0;
     try testing.expectEqual(signed_sample, signed_written_sample);
 
-    const unsigned_written_sample: u32 = unsigned_int_data.readSample() orelse 0;
+    const unsigned_written_sample: f64 = unsigned_int_data.readSample() orelse 0;
     try testing.expectEqual(unsigned_sample, unsigned_written_sample);
 
     const float_written_sample: f64 = float_data.readSample() orelse 0;
@@ -686,22 +686,18 @@ test "AudioData.writeSample handles endianness correctly" {
     var buffer: [128]u8 = undefined;
     const channels = 1;
 
-    const signed_int = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
-    const format = if (native_endian == .little) signed_16_int_format_le else signed_16_int_format_be;
+    // Initialize the data with an endianness different from the native one
+    const other_endian_signed_int = if (native_endian == .little) signed_16_int_be else signed_16_int_le;
+    const other_endian_format = if (native_endian == .little) signed_16_int_format_be else signed_16_int_format_le;
+    var data_big_endian = GenericAudioData(other_endian_signed_int).init(&buffer, channels, 44100, other_endian_format);
 
-    // Change to big-endian format for testing
-    var data_big_endian = GenericAudioData(signed_int).init(&buffer, channels, 44100, format);
-    const sample: i16 = -123;
+    const sample: f32 = 1;
 
-    // we are swaping to simulate we have a format that is not native to our system
-    const swapped_sample: i16 = @byteSwap(sample);
-
-    try data_big_endian.writeSample(swapped_sample);
+    try data_big_endian.writeSample(sample);
     data_big_endian.rewind();
 
-    //  When we read the sample, it will return in the swapped form, as the data is not native to our system
-    const read_sample: i16 = data_big_endian.readSample() orelse 0;
-    try testing.expectEqual(swapped_sample, read_sample);
+    const read_sample: f32 = data_big_endian.readSample() orelse 0;
+    try testing.expectEqual(sample, read_sample);
 }
 
 test "AudioData.write and read multiple samples" {
@@ -718,7 +714,7 @@ test "AudioData.write and read multiple samples" {
     var signed_int_data = GenericAudioData(signed_int).init(&signed_buffer, channels, 44100, signed_int_format);
     var float_data = GenericAudioData(float).init(&float_buffer, channels, 44100, float_format);
 
-    var signed_samples = [_]i16{ -12345, 23456, -32768 };
+    var signed_samples = [_]f32{ 1.0, -1.0, 1.0 };
     var float_samples = [_]f64{ 123456.789, -987654.321, 456789.123 };
 
     // Write multiple samples
@@ -730,7 +726,7 @@ test "AudioData.write and read multiple samples" {
 
     // Read and check multiple samples
     for (signed_samples) |expected| {
-        const sample: i16 = signed_int_data.readSample() orelse 0;
+        const sample: f32 = signed_int_data.readSample() orelse 0;
         try testing.expectEqual(expected, sample);
     }
 
@@ -742,18 +738,19 @@ test "AudioData.write and read multiple samples" {
 
 test "AudioData.writeSample returns out_of_bounds when writing out of buffer space" {
     const channels = 2;
+    const nb_samples = 2;
+
     const format_type = if (native_endian == .little) signed_16_int_le else signed_16_int_be;
     const mock_format = if (native_endian == .little) signed_16_int_format_le else signed_16_int_format_be;
 
-    const nb_samples = 2;
     var buffer: [nb_samples * @sizeOf(i16)]u8 = undefined;
 
     var data = GenericAudioData(format_type).init(&buffer, channels, 44100, mock_format);
-    var samples = [_]i16{ -12345, 23456 };
+    var samples = [_]f32{ 1.0, -1.0 };
 
     try data.write(&samples);
 
-    try testing.expectError(AudioDataError.out_of_bounds, data.writeSample(32767));
+    try testing.expectError(AudioDataError.out_of_bounds, data.writeSample(0.2));
 }
 
 test "AudioData.readSample returns null when reading out of bounds" {
@@ -765,20 +762,20 @@ test "AudioData.readSample returns null when reading out of bounds" {
     var buffer: [nb_samples * @sizeOf(i16)]u8 = undefined;
 
     var data = GenericAudioData(format_type).init(&buffer, channels, 44100, mock_format);
-    var samples = [_]i16{ -12345, 23456 };
+    var samples = [_]f32{ -1.0, 1.0 };
 
     try data.write(&samples);
     data.rewind();
 
     // Read two samples, should succeed
-    const sample1: i16 = data.readSample() orelse unreachable;
+    const sample1: f32 = data.readSample() orelse unreachable;
     try testing.expectEqual(samples[0], sample1);
 
-    const sample2: i16 = data.readSample() orelse unreachable;
+    const sample2: f32 = data.readSample() orelse unreachable;
     try testing.expectEqual(samples[1], sample2);
 
     // Attempt to read beyond available samples, should return null
-    const out_of_bounds_sample: ?i16 = data.readSample();
+    const out_of_bounds_sample: ?f32 = data.readSample();
     try testing.expectEqual(null, out_of_bounds_sample);
 }
 
@@ -791,17 +788,17 @@ test "AudioData.seek positions correctly" {
     var buffer: [nb_samples * @sizeOf(i16)]u8 = undefined;
 
     var data = GenericAudioData(format_type).init(&buffer, channels, 44100, mock_format);
-    var samples = [nb_samples]i16{ -12345, 23456, -32768, 32767 };
+    var samples = [nb_samples]f32{ -1.0, 1.0, -1.0, 1 };
     try data.write(&samples);
 
     // Seek to the second sample
     try data.seek(1);
-    const second_sample: i16 = data.readSample() orelse unreachable;
+    const second_sample: f32 = data.readSample() orelse unreachable;
     try testing.expectEqual(samples[1], second_sample);
 
     // Seek to the last sample
     try data.seek(3);
-    const last_sample: i16 = data.readSample() orelse unreachable;
+    const last_sample: f32 = data.readSample() orelse unreachable;
     try testing.expectEqual(samples[3], last_sample);
 
     // Seek out of bounds should return an error
