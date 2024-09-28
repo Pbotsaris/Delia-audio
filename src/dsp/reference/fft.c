@@ -23,6 +23,67 @@
 
 
 
+// before
+//❯ zig build test --summary all
+//test
+//└─ run test stderr
+//fft: 0.00
+//dft: 0.00
+//-
+//fft: 0.89
+//dft: 1.12
+//-
+//fft: -1.32
+//dft: 1.12
+//-
+//fft: 1.97
+//dft: 1.13
+//-
+//fft: -0.44
+//dft: 1.13
+//-
+//fft: 0.94
+//dft: 1.12
+//-
+//fft: 1.54
+//dft: 1.13
+//-
+//fft: -0.30
+//dft: 1.13
+//-
+//fft: -0.00
+//dft: 1.13
+//-
+//
+//-----------------
+//fft inversed: 0.36, 0.44
+//dft inversed: 1.00, -0.00
+//-
+//fft inversed: 0.21, 0.43
+//dft inversed: -1.00, 0.00
+//-
+//fft inversed: 0.54, -0.37
+//dft inversed: -0.79, 0.25
+//-
+//fft inversed: -0.31, 0.21
+//dft inversed: 0.32, -0.09
+//-
+//fft inversed: -0.11, -0.44
+//dft inversed: -0.65, 0.10
+//-
+//fft inversed: 0.41, -0.36
+//dft inversed: -0.39, -0.55
+//-
+//fft inversed: 0.39, -0.27
+//dft inversed: 0.03, -0.32
+//-
+//fft inversed: -0.15, 0.19
+//dft inversed: 0.50, -0.43
+//-
+//fft inversed: -0.27, -0.15
+//dft inversed: -0.19, 0.16
+
+
 // before change
 //❯ zig build test --summary all
 //test

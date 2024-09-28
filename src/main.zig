@@ -10,8 +10,25 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    //examples.playbackSineWave();
-    //
+    const allocator = std.heap.page_allocator;
+
+    const transform = dsp.transforms.FourierTransforms(f32);
+
+    for (0..50) |_| {
+        const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
+
+        var sine: [4099]f32 = undefined;
+        //
+
+        sineGeneration.generate(&sine);
+
+        var out = transform.fft(allocator, &sine) catch |err| {
+            std.debug.print("Error: {}\n", .{err});
+            return;
+        };
+
+        out.deinit(allocator);
+    }
 }
 
 test {

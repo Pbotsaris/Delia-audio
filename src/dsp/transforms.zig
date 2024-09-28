@@ -22,6 +22,7 @@ pub fn FourierTransforms(comptime T: type) type {
     return struct {
         const ComplexType = std.math.Complex(T);
         const MultiArrayList = std.MultiArrayList(ComplexType);
+
         // This implementation is O(n^2)
         pub fn dft(allocator: std.mem.Allocator, in: []T) !MultiArrayList {
             var out = MultiArrayList{};
@@ -54,6 +55,8 @@ pub fn FourierTransforms(comptime T: type) type {
 
             var inout = MultiArrayList{};
             try inout.setCapacity(allocator, in.len);
+
+            errdefer inout.deinit(allocator);
 
             for (in) |item| try inout.append(allocator, ComplexType.init(item, 0));
 
@@ -378,6 +381,27 @@ test "inverse fft simple power non power of two" {
     for (0..input_signal.len) |i| {
         const inversed_item = inversed.get(i);
         try testing.expectApproxEqAbs(input_signal[i], inversed_item.re, 0.0001);
+    }
+}
+
+test "fft sine multiple of 2" {
+    const allocator = std.testing.allocator;
+
+    const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var sine: [128]f32 = undefined;
+    sineGeneration.generate(&sine);
+
+    const transforms = FourierTransforms(f32);
+    var output = try transforms.fft(allocator, &sine);
+    defer output.deinit(allocator);
+
+    try testing.expectEqual(output.len, test_data.expected_sine_dft.len);
+
+    var i: usize = 0;
+    for (output.items(.re), output.items(.im)) |re, im| {
+        try testing.expectApproxEqAbs(test_data.expected_sine_dft[i].re, re, 0.001);
+        try testing.expectApproxEqAbs(test_data.expected_sine_dft[i].im, im, 0.001);
+        i += 1;
     }
 }
 
