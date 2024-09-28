@@ -197,7 +197,7 @@ pub fn FourierTransforms(comptime T: type) type {
 
             for (1..inout.len) |i| {
                 const conj = exp_table.get(i).conjugate();
-                bvec.set(i, exp_table.get(i));
+                bvec.set(i, conj);
                 bvec.set(conv_len - i, conj);
             }
 
