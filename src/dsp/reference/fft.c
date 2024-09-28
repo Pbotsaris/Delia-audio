@@ -21,6 +21,42 @@
  * in the Software.
  */
 
+
+
+// before change
+//❯ zig build test --summary all
+//test
+//└─ run test stderr
+//inversed: 0.36425954, 0.4415535
+//inversed: 0.20938939, 0.42893967
+//inversed: 0.53853136, -0.37483793
+//inversed: -0.3122076, 0.20644407
+//inversed: -0.11402022, -0.44126818
+//inversed: 0.40850547, -0.36458954
+//inversed: 0.38600132, -0.26634905
+//inversed: -0.1451025, 0.18617548
+//inversed: -0.26949632, -0.14777523
+//
+// After changing
+//❯ zig build test --summary all
+//test
+//└─ run test stderr
+//inversed: 0.36425954, 0.4415535
+//inversed: 0.20938939, 0.42893967
+//inversed: 0.53853136, -0.37483793
+//inversed: -0.3122076, 0.20644407
+//inversed: -0.11402022, -0.44126818
+//inversed: 0.40850547, -0.36458954
+//inversed: 0.38600132, -0.26634905
+//inversed: -0.1451025, 0.18617548
+//inversed: -0.26949632, -0.14777523
+//Build Summary: 3/3 steps succeeded; 29/29 tests passed
+//test success
+//└─ run test 29 passed 3ms MaxRSS:5M
+//   └─ zig test Debug native success 1s MaxRSS:311M
+//
+//
+
 #include "fft.h"
 #include <math.h>
 #include <stdint.h>
@@ -125,6 +161,7 @@ bool Fft_transformBluestein(double complex vec[], size_t n, bool inverse) {
   // Temporary vectors and preprocessing
   for (size_t i = 0; i < n; i++)
     avec[i] = vec[i] * exptable[i];
+
   bvec[0] = exptable[0];
   for (size_t i = 1; i < n; i++)
     bvec[i] = bvec[m - i] = conj(exptable[i]);

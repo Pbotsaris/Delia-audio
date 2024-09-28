@@ -22,12 +22,6 @@ pub fn FourierTransforms(comptime T: type) type {
     return struct {
         const ComplexType = std.math.Complex(T);
         const MultiArrayList = std.MultiArrayList(ComplexType);
-        // Discrete Fourier Transform
-        // X[k] = Σ x[t] * e^(-i * 2 * π * k * t / n)
-        // where x[n] is the input signal
-        // X[k] is the output signal
-        // N is the number of samples
-        // i is the imaginary unit
         // This implementation is O(n^2)
         pub fn dft(allocator: std.mem.Allocator, in: []T) !MultiArrayList {
             var out = MultiArrayList{};
@@ -199,13 +193,12 @@ pub fn FourierTransforms(comptime T: type) type {
                 avec.set(i, inout.get(i).mul(exp_table.get(i)));
             }
 
-            for (0..inout.len) |i| {
-                if (i == 0) {
-                    bvec.set(i, exp_table.get(0));
-                    continue;
-                }
+            bvec.set(0, exp_table.get(0));
 
-                bvec.set(conv_len - i, exp_table.get(i).conjugate());
+            for (1..inout.len) |i| {
+                const conj = exp_table.get(i).conjugate();
+                bvec.set(i, exp_table.get(i));
+                bvec.set(conv_len - i, conj);
             }
 
             // convolution phase here
@@ -221,6 +214,11 @@ pub fn FourierTransforms(comptime T: type) type {
         }
 
         pub fn convolve(allocator: std.mem.Allocator, avec: *MultiArrayList, bvec: *MultiArrayList) !MultiArrayList {
+
+            // var avec_dup = try avec.clone(allocator);
+            //
+            // var bvec_dup = try bvec.clone(allocator);
+            //  defer bvec_dup.deinit(allocator);
 
             // we are modifying in place as these vector are not needed in the called
             var avec_ffted = try fftComplex(allocator, avec, Direction.forward);
@@ -320,7 +318,7 @@ test "dft sine" {
 
 test "fft simple power of 2" {
     const allocator = std.testing.allocator;
-    var input_signal = [_]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75 };
+    var input_signal = [8]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75 };
 
     const transforms = FourierTransforms(f32);
     var fft_out = try transforms.fft(allocator, &input_signal);
@@ -337,9 +335,40 @@ test "fft simple power of 2" {
     }
 }
 
+test "fft simple non power of 2" {
+    const allocator = std.testing.allocator;
+    var input_signal = [9]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75, -1.0 };
+
+    const transforms = FourierTransforms(f32);
+    var fft_out = try transforms.fft(allocator, &input_signal);
+    var dft_out = try transforms.dft(allocator, &input_signal);
+    defer fft_out.deinit(allocator);
+    defer dft_out.deinit(allocator);
+
+    for (0..input_signal.len) |i| {
+        const fft = fft_out.get(i);
+        const dft = dft_out.get(i);
+
+        std.debug.print("fft: {d:.2}\ndft: {d:.2}\n-\n", .{ fft.re, dft.re });
+        //   try testing.expectApproxEqAbs(fft.re, dft.re, 0.0001);
+        //   try testing.expectApproxEqAbs(fft.im, dft.im, 0.0001);
+    }
+
+    std.debug.print("\n-----------------\n", .{});
+
+    var inversed = try transforms.ifft(allocator, &fft_out);
+    var inversed_dft = try transforms.ifft(allocator, &dft_out);
+
+    for (0..input_signal.len) |i| {
+        const inversed_item = inversed.get(i);
+        std.debug.print("fft inversed: {d:.2}, {d:.2}\n", .{ inversed_item.re, inversed_item.im });
+        std.debug.print("dft inversed: {d:.2}, {d:.2}\n-\n", .{ inversed_dft.get(i).re, inversed_dft.get(i).im });
+    }
+}
+
 test "inverse fft simple power of two" {
     const allocator = std.testing.allocator;
-    var input_signal = [_]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75 };
+    var input_signal = [8]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, 0.75 };
 
     const transforms = FourierTransforms(f32);
 
@@ -350,8 +379,7 @@ test "inverse fft simple power of two" {
 
     for (0..input_signal.len) |i| {
         const inversed_item = inversed.get(i);
-        std.debug.print("{d:.2}, {d:.2}\n", .{ inversed_item.re, inversed_item.im });
-        //try testing.expectApproxEqAbs(input_signal[i], inversed_item.re, 0.0001);
+        try testing.expectApproxEqAbs(input_signal[i], inversed_item.re, 0.0001);
     }
 }
 
