@@ -183,7 +183,7 @@ pub fn FourierTransforms(comptime T: type) type {
             // trig tables
             for (0..inout.len) |i| {
                 const idx: usize = (i * i) % (inout.len * 2);
-                const pi: T = if (direction == .inverse) std.math.pi else -std.math.pi;
+                const pi: T = if (direction == .inverse) -std.math.pi else std.math.pi;
                 const phase = pi * @as(T, @floatFromInt(idx)) / @as(T, @floatFromInt(inout.len));
                 const exp = ComplexType.init(std.math.cos(phase), -std.math.sin(phase));
                 try exp_table.append(allocator, exp);
@@ -214,13 +214,6 @@ pub fn FourierTransforms(comptime T: type) type {
         }
 
         pub fn convolve(allocator: std.mem.Allocator, avec: *MultiArrayList, bvec: *MultiArrayList) !MultiArrayList {
-
-            // var avec_dup = try avec.clone(allocator);
-            //
-            // var bvec_dup = try bvec.clone(allocator);
-            //  defer bvec_dup.deinit(allocator);
-
-            // we are modifying in place as these vector are not needed in the called
             var avec_ffted = try fftComplex(allocator, avec, Direction.forward);
             const bvec_ffted = try fftComplex(allocator, bvec, Direction.forward);
 
@@ -349,26 +342,31 @@ test "fft simple non power of 2" {
         const fft = fft_out.get(i);
         const dft = dft_out.get(i);
 
-        std.debug.print("fft: {d:.2}\ndft: {d:.2}\n-\n", .{ fft.re, dft.re });
-        //   try testing.expectApproxEqAbs(fft.re, dft.re, 0.0001);
-        //   try testing.expectApproxEqAbs(fft.im, dft.im, 0.0001);
-    }
-
-    std.debug.print("\n-----------------\n", .{});
-
-    var inversed = try transforms.ifft(allocator, &fft_out);
-    var inversed_dft = try transforms.ifft(allocator, &dft_out);
-
-    for (0..input_signal.len) |i| {
-        const inversed_item = inversed.get(i);
-        std.debug.print("fft inversed: {d:.2}, {d:.2}\n", .{ inversed_item.re, inversed_item.im });
-        std.debug.print("dft inversed: {d:.2}, {d:.2}\n-\n", .{ inversed_dft.get(i).re, inversed_dft.get(i).im });
+        try testing.expectApproxEqAbs(fft.re, dft.re, 0.0001);
+        try testing.expectApproxEqAbs(fft.im, dft.im, 0.0001);
     }
 }
 
 test "inverse fft simple power of two" {
     const allocator = std.testing.allocator;
     var input_signal = [8]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, 0.75 };
+
+    const transforms = FourierTransforms(f32);
+
+    var fft_out = try transforms.fft(allocator, &input_signal);
+    defer fft_out.deinit(allocator);
+
+    var inversed = try transforms.ifft(allocator, &fft_out);
+
+    for (0..input_signal.len) |i| {
+        const inversed_item = inversed.get(i);
+        try testing.expectApproxEqAbs(input_signal[i], inversed_item.re, 0.0001);
+    }
+}
+
+test "inverse fft simple power non power of two" {
+    const allocator = std.testing.allocator;
+    var input_signal = [9]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, 0.75, -1.0 };
 
     const transforms = FourierTransforms(f32);
 
