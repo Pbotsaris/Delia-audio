@@ -4,8 +4,6 @@ const native_endian = @import("builtin").target.cpu.arch.endian();
 const FormatType = @import("settings.zig").FormatType;
 const Format = @import("format.zig").Format;
 
-// TODO: Expose sample as always floating point to the user.  always f32 but for float 64 audio_format where we will expose it as f64
-
 pub const AudioDataError = error{
     invalid_type,
     invalid_size,
@@ -125,7 +123,7 @@ pub fn GenericAudioData(format_type: FormatType) type {
             return @divFloor(self.data.len, @sizeOf(T));
         }
 
-        pub fn totalSameCount(self: Self) usize {
+        pub fn totalSampleCount(self: Self) usize {
             return self.bufferSize() * self.channels;
         }
 

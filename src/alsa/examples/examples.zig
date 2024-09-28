@@ -13,7 +13,7 @@ fn callback(data: Device.AudioDataType()) void {
     const sr: f32 = @floatFromInt(data.sample_rate);
     const phase_inc: f32 = 2.0 * std.math.pi * freq / sr;
 
-    for (0..data.totalSameCount()) |_| {
+    for (0..data.totalSampleCount()) |_| {
         const sample = amp * std.math.sin(phase);
 
         for (0..data.channels) |_| {

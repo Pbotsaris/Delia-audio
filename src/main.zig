@@ -1,5 +1,6 @@
 const std = @import("std");
 const alsa = @import("alsa/alsa.zig");
+const dsp = @import("dsp/dsp.zig");
 const examples = @import("alsa/examples/examples.zig");
 
 pub const std_options = .{
@@ -9,9 +10,11 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    examples.playbackSineWave();
+    //examples.playbackSineWave();
+    //
 }
 
 test {
     std.testing.refAllDeclsRecursive(alsa);
+    std.testing.refAllDeclsRecursive(dsp);
 }
