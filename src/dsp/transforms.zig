@@ -1,7 +1,6 @@
 const std = @import("std");
 const waves = @import("waves.zig");
 const test_data = @import("test_data.zig");
-const data_types = @import("data_types.zig");
 
 // nayuki.io/res/how-to-implement-the-discrete-fourier-transform/
 
@@ -33,6 +32,13 @@ const Error = error{
     overflow,
 } || std.mem.Allocator.Error;
 
+/// `FourierStatic` provides a high-performance API for FFT operations without heap allocation.
+/// This is designed for cases where the FFT size is known at compile time.
+/// Input vectors are modified in place.
+/// For dynamic FFT sizes or non-power-of-two inputs, see `FourierDynamic`.
+///
+/// - **FFT Size**: Must be known at compile time and specified via the `FFTSize` enum.
+/// - **Memory Management**: Uses a fixed buffer allocator for stack-based memory allocation, avoiding the overhead of heap operations.
 pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
     if (T != f32 and T != f64) {
         @compileError("FourierTransforms only supports f32 and f64");
@@ -40,7 +46,7 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
 
     return struct {
         const ComplexType = std.math.Complex(T);
-        const ComplexVector = data_types.ComplexVector(T);
+        const ComplexVector = std.MultiArrayList(ComplexType);
 
         const fft_size: usize = @intFromEnum(size);
         const levels: usize = std.math.log2(fft_size);
@@ -49,53 +55,142 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
         var fba = std.heap.FixedBufferAllocator.init(&internal_buffer);
         const allocator = fba.allocator();
 
+        /// A helper function to initialize a `ComplexVector` from an audio signal vector.
+        ///
+        /// - **Parameters**:
+        ///     - `heap_allocator`: Allocator for the `ComplexVector`.
+        ///     - `vec`: Input vector containing the audio signal.
+        /// - **Returns**: Initialized `ComplexVector`. Throws an error if the input size is invalid.
         pub fn createComplexVector(heap_allocator: std.mem.Allocator, vec: []T) !ComplexVector {
             if (vec.len != fft_size) return Error.invalid_input_size;
 
-            var out = try ComplexVector.init(heap_allocator, fft_size);
+            var out = ComplexVector{};
+            try out.setCapacity(heap_allocator, fft_size);
 
-            for (vec) |item| try out.appendScalar(item);
+            for (vec) |item| try out.append(allocator, ComplexType.init(item, 0));
 
             return out;
         }
 
+        /// Conveniently reuses an existing `ComplexVector` buffer for another FFT iteration by writing new input data to the vector.
+        ///
+        /// - **Parameters**:
+        ///     - `vec`: The `ComplexVector` to be reused.
+        ///     - `input`: The new input signal to be written into the `ComplexVector`.
+        /// - **Returns**: Updated `ComplexVector`. Throws an error if input size is invalid.
         pub fn setComplexVector(vec: *ComplexVector, input: []T) Error!ComplexVector {
-            if (vec.vector.len != input.len or vec.vector.len != fft_size) return Error.invalid_input_size;
+            if (vec.len != input.len or vec.len != fft_size) return Error.invalid_input_size;
 
             for (input, 0..input.len) |item, i| {
-                vec.setScalar(i, item);
+                vec.set(i, ComplexType.init(item, 0));
             }
 
             return vec.*;
         }
 
+        ///  Computes the FFT on the input vector in place.
+        ///  The input vector must be of size `fft_size`.
+        ///
+        /// - **Parameters**:
+        ///     - `inout`: Input/output vector, modified in place.
+        /// - **Returns**: Transformed `ComplexVector`. Throws an error if input size is invalid.
         pub fn fft(inout: *ComplexVector) Error!ComplexVector {
-            if (inout.vector.len != fft_size) return Error.invalid_input_size;
+            if (inout.len != fft_size) return Error.invalid_input_size;
 
             return fftRadix2(inout, .forward);
         }
 
+        /// Computes the inverse FFT on the input vector in place.
+        /// The input vector must be of size `fft_size`.
+        ///
+        /// - **Parameters**:
+        ///     - `inout`: Input/output vector, modified in place.
+        /// - **Returns**: Transformed `ComplexVector`. Throws an error if input size is invalid.
         pub fn ifft(inout: *ComplexVector) Error!ComplexVector {
-            if (inout.vector.len != fft_size) return Error.invalid_input_size;
+            if (inout.len != fft_size) return Error.invalid_input_size;
 
             var out = try fftRadix2(inout, .inverse);
-            out.normalize();
+
+            for (0..out.len) |i| {
+                const len = ComplexType.init(@as(T, @floatFromInt(out.len)), 0);
+                out.set(i, out.get(i).div(len));
+            }
 
             return out;
+        }
+
+        /// Calculates the magnitude (amplitude) of each element in the `ComplexVector` and writes the result to the output buffer.
+        /// Input and output lengths must match.
+        ///
+        /// - **Parameters**:
+        ///     - `vec`: The `ComplexVector` containing complex FFT data.
+        ///     - `out`: Output buffer to store magnitudes.
+        /// - **Returns**: Filled output buffer. Throws an error if sizes do not match.
+        pub fn magnitude(vec: *ComplexVector, out: []T) Error![]T {
+            if (vec.len != out.len) return Error.invalid_input_size;
+
+            for (0..vec.len) |i| {
+                out[i] = vec.get(i).magnitude();
+            }
+
+            return out;
+        }
+
+        /// Computes the phase (angle) of each element in the `ComplexVector` and writes the result to the output buffer.
+        ///
+        /// - **Parameters**:
+        ///     - `vec`: The `ComplexVector` containing complex FFT data.
+        ///     - `out`: Output buffer to store phase angles.
+        /// - **Returns**: Filled output buffer. Throws an error if sizes do not match.
+        pub fn phase(vec: *ComplexVector, out: []T) Error![]T {
+            if (vec.len != out.len) return Error.invalid_input_size;
+
+            for (0..vec.len) |i| {
+                const item = vec.get(i);
+                out[i] = std.math.atan2(item.im, item.re);
+            }
+
+            return out;
+        }
+
+        /// Convolves two complex vectors using FFT and modifies the both inputs in place.
+        /// Returns the avec as the result of the convolution.
+        ///
+        /// - **Parameters**:
+        ///     - `avec`, `bvec`: Input vectors to be convolved.
+        /// - **Returns**: Convolved `ComplexVector`. Throws an error if input sizes are invalid.
+        fn convolve(avec: *ComplexVector, bvec: *ComplexVector) !ComplexVector {
+            var avec_ffted = try fft(avec);
+            const bvec_ffted = try fft(bvec);
+
+            for (0..avec_ffted.len) |i| {
+                avec_ffted.set(i, avec_ffted.get(i).mul(bvec_ffted.get(i)));
+            }
+
+            var avec_inversed = try ifft(&avec_ffted);
+
+            // normalize the output
+            for (0..avec_inversed.len) |i| {
+                const len = ComplexType.init(@as(T, @floatFromInt(avec_inversed.len)), 0);
+                avec_inversed.set(i, avec_inversed.get(i).div(len));
+            }
+
+            return avec_inversed;
         }
 
         fn fftRadix2(inout: *ComplexVector, direction: Direction) Error!ComplexVector {
             const exp_table_len: usize = @divFloor(fft_size, 2);
 
-            var exp_table = try ComplexVector.init(allocator, exp_table_len);
-            defer exp_table.deinit();
+            var exp_table = ComplexVector{};
+            try exp_table.setCapacity(allocator, exp_table_len);
+            defer exp_table.deinit(allocator);
 
             for (0..exp_table_len) |i| {
                 const pi: T = if (direction == .inverse) -2.0 * std.math.pi else 2.0 * std.math.pi;
-                const phase: T = pi * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(inout.vector.len));
-                const exp = ComplexType.init(std.math.cos(phase), -std.math.sin(phase));
+                const angle: T = pi * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(inout.len));
+                const exp = ComplexType.init(std.math.cos(angle), -std.math.sin(angle));
 
-                try exp_table.append(exp);
+                try exp_table.append(allocator, exp);
             }
 
             // bit-reversal permutation
@@ -115,7 +210,7 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
 
             while (full_size <= fft_size) : (full_size *= 2) {
                 const half_size: usize = @divFloor(full_size, 2);
-                const table_step: usize = @divFloor(inout.vector.len, full_size);
+                const table_step: usize = @divFloor(inout.len, full_size);
                 var idx: usize = 0;
 
                 while (idx < fft_size) : (idx += full_size) {
@@ -124,9 +219,12 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
 
                     while (inner_idx < idx + half_size) : (inner_idx += 1) {
                         const out_idx = inner_idx + half_size;
+
                         const tmp = inout.get(out_idx).mul(exp_table.get(table_idx));
-                        inout.set(out_idx, inout.get(inner_idx).sub(tmp));
-                        inout.set(inner_idx, inout.get(inner_idx).add(tmp));
+                        var temp2 = inout.get(inner_idx);
+
+                        inout.set(out_idx, temp2.sub(tmp));
+                        inout.set(inner_idx, temp2.add(tmp));
 
                         table_idx += table_step;
                     }
@@ -141,6 +239,10 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
     };
 }
 
+/// `FourierDynamic` provides a flexible FFT API that supports heap allocation and dynamic FFT sizes.
+/// It can handle non-power-of-two sizes using the Bluestein algorithm, although with reduced performance compared to radix-2 FFT.
+///
+/// - **FFT Size**: Dynamic and can vary at runtime. Power-of-two sizes are handled using radix-2 FFT, while non-power-of-two sizes are processed using the Bluestein algorithm.
 pub fn FourierDynamic(comptime T: type) type {
     if (T != f32 and T != f64) {
         @compileError("FourierTransforms only supports f32 and f64");
@@ -148,11 +250,16 @@ pub fn FourierDynamic(comptime T: type) type {
 
     return struct {
         const ComplexType = std.math.Complex(T);
-        const MultiArrayList = std.MultiArrayList(ComplexType);
+        const ComplexVector = std.MultiArrayList(ComplexType);
 
-        // This implementation is O(n^2) and used for testing purposes
-        pub fn dft(allocator: std.mem.Allocator, in: []T) !MultiArrayList {
-            var out = MultiArrayList{};
+        /// A simple Discrete Fourier Transform (DFT) implementation for testing purposes.
+        ///
+        /// - **Parameters**:
+        ///     - `allocator`: Allocator for dynamic memory management.
+        ///     - `in`: Input vector with the audio signal.
+        /// - **Returns**: DFT-transformed `ComplexVector`.
+        pub fn dft(allocator: std.mem.Allocator, in: []T) !ComplexVector {
+            var out = ComplexVector{};
             try out.setCapacity(allocator, in.len);
 
             const n = in.len;
@@ -161,13 +268,13 @@ pub fn FourierDynamic(comptime T: type) type {
                 var sum = ComplexType.init(0.0, 0.0);
 
                 for (0..n) |t| {
-                    const phase = 2.0 *
+                    const angle = 2.0 *
                         std.math.pi *
                         @as(T, @floatFromInt(t)) *
                         @as(T, @floatFromInt(k)) /
                         @as(T, @floatFromInt(n));
 
-                    const exp = ComplexType.init(std.math.cos(phase), -std.math.sin(phase));
+                    const exp = ComplexType.init(std.math.cos(angle), -std.math.sin(angle));
                     sum = sum.add(exp.mul(ComplexType.init(in[t], 0)));
                 }
 
@@ -177,10 +284,16 @@ pub fn FourierDynamic(comptime T: type) type {
             return out;
         }
 
-        pub fn fft(allocator: std.mem.Allocator, in: []T) Error!MultiArrayList {
-            if (in.len == 0) return MultiArrayList{};
+        /// Computes the FFT dynamically, choosing the appropriate algorithm based on input size (radix-2 or Bluestein).
+        ///
+        /// - **Parameters**:
+        ///     - `allocator`: Allocator for dynamic memory management.
+        ///     - `in`: Input vector.
+        /// - **Returns**: FFT-transformed `ComplexVector`. Throws an error if input size is invalid.
+        pub fn fft(allocator: std.mem.Allocator, in: []T) Error!ComplexVector {
+            if (in.len == 0) return ComplexVector{};
 
-            var inout = MultiArrayList{};
+            var inout = ComplexVector{};
             try inout.setCapacity(allocator, in.len);
 
             errdefer inout.deinit(allocator);
@@ -192,7 +305,13 @@ pub fn FourierDynamic(comptime T: type) type {
             else return try fftBluestein(allocator, &inout, .forward);
         }
 
-        pub fn ifft(allocator: std.mem.Allocator, inout: *MultiArrayList) Error!MultiArrayList {
+        /// Computes the inverse FFT dynamically, applying either radix-2 or Bluestein as necessary.
+        ///
+        /// - **Parameters**:
+        ///     - `allocator`: Allocator for dynamic memory management.
+        ///     - `inout`: Input/output vector, modified in place.
+        /// - **Returns**: Inverse FFT-transformed `ComplexVector`. Throws an error if input size is invalid.
+        pub fn ifft(allocator: std.mem.Allocator, inout: *ComplexVector) Error!ComplexVector {
             if (inout.len == 0) return inout.*;
 
             var out = if (isPowerOfTwo(inout.len)) try fftRadix2(allocator, inout, .inverse) else try fftBluestein(allocator, inout, .inverse);
@@ -206,30 +325,40 @@ pub fn FourierDynamic(comptime T: type) type {
             return out;
         }
 
+        /// Convolves two complex vectors using FFT. This method creates copies of the input vectors to avoid in-place modification.
+        ///
+        /// - **Parameters**:
+        ///     - `allocator`: Allocator for dynamic memory management.
+        ///     - `avec`, `bvec`: Input vectors to be convolved.
+        /// - **Returns**: Convolved `ComplexVector`. Throws an error if input sizes are invalid.
+        pub fn convolve(allocator: std.mem.Allocator, avec: *ComplexVector, bvec: *ComplexVector) !ComplexVector {
+            var avec_dupped = try avec.clone(allocator);
+            var bvec_dupped = try bvec.clone(allocator);
+            defer avec_dupped.deinit(allocator);
+            defer bvec_dupped.deinit(allocator);
+
+            return convolveInPlace(allocator, avec_dupped, bvec_dupped);
+        }
+
         // Private
 
-        fn fftComplex(allocator: std.mem.Allocator, inout: *MultiArrayList, direction: Direction) Error!MultiArrayList {
-            if (inout.len == 0) return MultiArrayList{};
+        fn fftComplex(allocator: std.mem.Allocator, inout: *ComplexVector, direction: Direction) Error!ComplexVector {
+            if (inout.len == 0) return ComplexVector{};
 
             if (isPowerOfTwo(inout.len)) return try fftRadix2(allocator, inout, direction)
             // more complex algorithms are used for non power of two sizes
             else return try fftBluestein(allocator, inout, direction);
         }
 
-        fn fftRadix2(allocator: std.mem.Allocator, inout: *MultiArrayList, direction: Direction) Error!MultiArrayList {
+        fn fftRadix2(allocator: std.mem.Allocator, inout: *ComplexVector, direction: Direction) Error!ComplexVector {
             // sanity check for power of two
             if (!isPowerOfTwo(inout.len)) return Error.invalid_input_size;
 
-            // calculate "levels"  needed to split the input down to a single element
-            // "levels" is then the number of times the input can be divided by 2
-            var levels: usize = 0;
-            var n: usize = inout.len;
+            // calculate "levels" needed to split the input down to a single element
+            const n: usize = inout.len;
+            const levels: usize = std.math.log2(n);
 
-            // shifting by 1 is the same as dividing by 2
-            // equivalent to log2(n)
-            while (n > 1) : (n >>= 1) levels += 1;
-
-            var exp_table = MultiArrayList{};
+            var exp_table = ComplexVector{};
             const exp_table_len: usize = @divFloor(inout.len, 2);
 
             defer exp_table.deinit(allocator);
@@ -237,8 +366,8 @@ pub fn FourierDynamic(comptime T: type) type {
 
             for (0..exp_table_len) |i| {
                 const pi: T = if (direction == .inverse) -2.0 * std.math.pi else 2.0 * std.math.pi;
-                const phase: T = pi * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(inout.len));
-                const exp = ComplexType.init(std.math.cos(phase), -std.math.sin(phase));
+                const angle: T = pi * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(inout.len));
+                const exp = ComplexType.init(std.math.cos(angle), -std.math.sin(angle));
 
                 try exp_table.append(allocator, exp);
             }
@@ -281,7 +410,7 @@ pub fn FourierDynamic(comptime T: type) type {
             return inout.*;
         }
 
-        fn fftBluestein(allocator: std.mem.Allocator, inout: *MultiArrayList, direction: Direction) Error!MultiArrayList {
+        fn fftBluestein(allocator: std.mem.Allocator, inout: *ComplexVector, direction: Direction) Error!ComplexVector {
             var conv_len: usize = 1;
 
             // Find power of 2 conv_len such that -> conv_len  >= in.len * 2 + 1;
@@ -291,13 +420,13 @@ pub fn FourierDynamic(comptime T: type) type {
                 conv_len *= 2;
             }
 
-            var exp_table = MultiArrayList{};
+            var exp_table = ComplexVector{};
             defer exp_table.deinit(allocator);
 
-            var avec = MultiArrayList{};
+            var avec = ComplexVector{};
             defer avec.deinit(allocator);
 
-            var bvec = MultiArrayList{};
+            var bvec = ComplexVector{};
             defer bvec.deinit(allocator);
 
             try exp_table.setCapacity(allocator, inout.len);
@@ -313,8 +442,8 @@ pub fn FourierDynamic(comptime T: type) type {
             for (0..inout.len) |i| {
                 const idx: usize = (i * i) % (inout.len * 2);
                 const pi: T = if (direction == .inverse) -std.math.pi else std.math.pi;
-                const phase = pi * @as(T, @floatFromInt(idx)) / @as(T, @floatFromInt(inout.len));
-                const exp = ComplexType.init(std.math.cos(phase), -std.math.sin(phase));
+                const angle = pi * @as(T, @floatFromInt(idx)) / @as(T, @floatFromInt(inout.len));
+                const exp = ComplexType.init(std.math.cos(angle), -std.math.sin(angle));
                 try exp_table.append(allocator, exp);
             }
 
@@ -333,7 +462,7 @@ pub fn FourierDynamic(comptime T: type) type {
             // convolution phase here
             // Note that it modifies both avec and bvec in place
             // we return avec
-            avec = try convolve(allocator, &avec, &bvec);
+            avec = try convolveInPlace(allocator, &avec, &bvec);
 
             for (0..inout.len) |i| {
                 inout.set(i, avec.get(i).mul(exp_table.get(i)));
@@ -342,7 +471,7 @@ pub fn FourierDynamic(comptime T: type) type {
             return inout.*;
         }
 
-        fn convolve(allocator: std.mem.Allocator, avec: *MultiArrayList, bvec: *MultiArrayList) !MultiArrayList {
+        fn convolveInPlace(allocator: std.mem.Allocator, avec: *ComplexVector, bvec: *ComplexVector) !ComplexVector {
             var avec_ffted = try fftComplex(allocator, avec, Direction.forward);
             const bvec_ffted = try fftComplex(allocator, bvec, Direction.forward);
 
@@ -569,7 +698,7 @@ test "static fft simple input" {
     // but the allocation can be done before the fft calculation
     // and it can be reused for multiple fft
     var complex_vec = try transform.createComplexVector(allocator, &input_signal[0]);
-    defer complex_vec.deinit();
+    defer complex_vec.deinit(allocator);
 
     // transform 3 times. we always modify the same complex vector
     for (0..input_signal.len) |i| {
@@ -577,7 +706,7 @@ test "static fft simple input" {
         complex_vec = try transform.ifft(&complex_vec);
 
         // run 3 times reset the complex vector
-        for (0..complex_vec.vector.len) |j| {
+        for (0..complex_vec.len) |j| {
             const item = complex_vec.get(j);
             try testing.expectApproxEqAbs(input_signal[i][j], item.re, 0.0001);
         }

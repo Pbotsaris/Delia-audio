@@ -47,7 +47,7 @@ fn fftStatic(allocator: std.mem.Allocator) void {
         return;
     };
 
-    defer complex_vec.deinit();
+    defer complex_vec.deinit(allocator);
 
     complex_vec = transform.fft(&complex_vec) catch |err| {
         std.debug.print("Error: {}\n", .{err});

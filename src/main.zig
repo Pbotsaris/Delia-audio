@@ -2,7 +2,6 @@ const std = @import("std");
 const alsa = @import("alsa/alsa.zig");
 const dsp = @import("dsp/dsp.zig");
 const examples = @import("alsa/examples/examples.zig");
-const data_types = @import("dsp/data_types.zig");
 
 pub const std_options = .{
     .log_level = .debug,
