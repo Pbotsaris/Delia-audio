@@ -1,6 +1,7 @@
 const std = @import("std");
 const waves = @import("waves.zig");
 const test_data = @import("test_data.zig");
+const data_types = @import("data_types.zig");
 
 // nayuki.io/res/how-to-implement-the-discrete-fourier-transform/
 
@@ -9,63 +10,92 @@ const Direction = enum {
     inverse,
 };
 
+const FFTSize = enum(usize) {
+    fft_2 = 2,
+    fft_4 = 4,
+    fft_8 = 8,
+    fft_16 = 16,
+    fft_32 = 32,
+    fft_64 = 64,
+    fft_128 = 128,
+    fft_256 = 256,
+    fft_512 = 512,
+    fft_1024 = 1024,
+    fft_2048 = 2048,
+    fft_4096 = 4096,
+    fft_8192 = 8192,
+    fft_16384 = 16384,
+    fft_32768 = 32768,
+};
+
 const Error = error{
     invalid_input_size,
     overflow,
 } || std.mem.Allocator.Error;
 
-pub fn FourierStatic(comptime T: type, comptime size: usize) type {
+pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
     if (T != f32 and T != f64) {
         @compileError("FourierTransforms only supports f32 and f64");
     }
 
     return struct {
         const ComplexType = std.math.Complex(T);
-        const MultiArrayList = std.MultiArrayList(ComplexType);
+        const ComplexVector = data_types.ComplexVector(T);
 
-        const fft_size: usize = size;
-        const levels: usize = calculateLevels(size);
+        const fft_size: usize = @intFromEnum(size);
+        const levels: usize = std.math.log2(fft_size);
 
-        var internal_buffer: [size * @sizeOf(ComplexType)]u8 = undefined;
+        var internal_buffer: [fft_size * @sizeOf(ComplexType)]u8 = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&internal_buffer);
         const allocator = fba.allocator();
 
-        pub fn createComplexVector(heap_allocator: std.mem.Allocator, vec: []T) !MultiArrayList {
-            if (vec.len != fft_size) return Error.invalidInput;
+        pub fn createComplexVector(heap_allocator: std.mem.Allocator, vec: []T) !ComplexVector {
+            if (vec.len != fft_size) return Error.invalid_input_size;
 
-            var out = MultiArrayList{};
-            try out.setCapacity(heap_allocator, vec.len);
+            var out = try ComplexVector.init(heap_allocator, fft_size);
 
-            for (vec) |item| try out.append(heap_allocator, ComplexType.init(item, 0));
+            for (vec) |item| try out.appendScalar(item);
 
             return out;
         }
 
-        pub fn fft(inout: *MultiArrayList) Error!MultiArrayList {
-            if (inout.len != fft_size) return Error.invalidInput;
+        pub fn setComplexVector(vec: *ComplexVector, input: []T) Error!ComplexVector {
+            if (vec.vector.len != input.len or vec.vector.len != fft_size) return Error.invalid_input_size;
+
+            for (input, 0..input.len) |item, i| {
+                vec.setScalar(i, item);
+            }
+
+            return vec.*;
+        }
+
+        pub fn fft(inout: *ComplexVector) Error!ComplexVector {
+            if (inout.vector.len != fft_size) return Error.invalid_input_size;
 
             return fftRadix2(inout, .forward);
         }
 
-        pub fn ifft(inout: *MultiArrayList) Error!MultiArrayList {
-            if (inout.len != fft_size) return Error.invalidInput;
+        pub fn ifft(inout: *ComplexVector) Error!ComplexVector {
+            if (inout.vector.len != fft_size) return Error.invalid_input_size;
 
-            return fftRadix2(inout, .inverse);
+            var out = try fftRadix2(inout, .inverse);
+            out.normalize();
+
+            return out;
         }
 
-        fn fftRadix2(inout: *MultiArrayList, direction: Direction) Error!MultiArrayList {
-            var exp_table = MultiArrayList{};
+        fn fftRadix2(inout: *ComplexVector, direction: Direction) Error!ComplexVector {
             const exp_table_len: usize = @divFloor(fft_size, 2);
 
-            defer exp_table.deinit(allocator);
-            try exp_table.setCapacity(allocator, exp_table_len);
+            var exp_table = try ComplexVector.init(allocator, exp_table_len);
+            defer exp_table.deinit();
 
             for (0..exp_table_len) |i| {
                 const pi: T = if (direction == .inverse) -2.0 * std.math.pi else 2.0 * std.math.pi;
-                const phase: T = pi * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(inout.len));
+                const phase: T = pi * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(inout.vector.len));
                 const exp = ComplexType.init(std.math.cos(phase), -std.math.sin(phase));
 
-                try exp_table.append(allocator, exp);
+                try exp_table.append(exp);
             }
 
             // bit-reversal permutation
@@ -85,7 +115,7 @@ pub fn FourierStatic(comptime T: type, comptime size: usize) type {
 
             while (full_size <= fft_size) : (full_size *= 2) {
                 const half_size: usize = @divFloor(full_size, 2);
-                const table_step: usize = @divFloor(inout.len, full_size);
+                const table_step: usize = @divFloor(inout.vector.len, full_size);
                 var idx: usize = 0;
 
                 while (idx < fft_size) : (idx += full_size) {
@@ -368,15 +398,6 @@ fn isPowerOfTwo(n: usize) bool {
     return n != 0 and n & (n - 1) == 0;
 }
 
-fn calculateLevels(comptime fft_size: usize) usize {
-    var levels: usize = 0;
-    var n: usize = fft_size;
-
-    while (n > 1) : (n >>= 1) levels += 1;
-
-    return levels;
-}
-
 const testing = std.testing;
 
 test "dft simple" {
@@ -528,6 +549,43 @@ test "dynamic inverse fft sine wave power non power of two" {
     for (0..sine.len) |i| {
         const inversed_item = inversed.get(i);
         try testing.expectApproxEqAbs(sine[i], inversed_item.re, 0.0001);
+    }
+}
+
+test "static fft simple input" {
+    const allocator = std.testing.allocator;
+    const fft_size: FFTSize = FFTSize.fft_8;
+    var input_signal = [3][@intFromEnum(fft_size)]f32{
+        .{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, 0.75 },
+        .{ 0.3, 0.4, 0.9, 0.8, 0.4, 0.1, 0.0, 0.75 },
+        .{ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8 },
+    };
+
+    // static fourier the fft_size is known at compile time
+    // it does no interal heap allocator
+    const transform = FourierStatic(f32, fft_size);
+
+    // we need a complex vector to process the input
+    // but the allocation can be done before the fft calculation
+    // and it can be reused for multiple fft
+    var complex_vec = try transform.createComplexVector(allocator, &input_signal[0]);
+    defer complex_vec.deinit();
+
+    // transform 3 times. we always modify the same complex vector
+    for (0..input_signal.len) |i| {
+        complex_vec = try transform.fft(&complex_vec);
+        complex_vec = try transform.ifft(&complex_vec);
+
+        // run 3 times reset the complex vector
+        for (0..complex_vec.vector.len) |j| {
+            const item = complex_vec.get(j);
+            try testing.expectApproxEqAbs(input_signal[i][j], item.re, 0.0001);
+        }
+
+        // reset the input signal
+        if (i + 1 < input_signal.len) {
+            complex_vec = try transform.setComplexVector(&complex_vec, &input_signal[i + 1]);
+        }
     }
 }
 

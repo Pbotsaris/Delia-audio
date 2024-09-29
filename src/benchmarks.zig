@@ -4,7 +4,7 @@ const zbench = @import("zbench");
 
 fn fftPowerOfTwo(allocator: std.mem.Allocator) void {
     //
-    const transform = dsp.transforms.FourierTransforms(f32);
+    const transform = dsp.transforms.FourierDynamic(f32);
 
     const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
     var sine: [4096]f32 = undefined;
@@ -19,7 +19,7 @@ fn fftPowerOfTwo(allocator: std.mem.Allocator) void {
 }
 
 fn fftNonPowerOfTwo(allocator: std.mem.Allocator) void {
-    const transform = dsp.transforms.FourierTransforms(f32);
+    const transform = dsp.transforms.FourierDynamic(f32);
     const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
 
     var sine: [4099]f32 = undefined;
@@ -33,6 +33,28 @@ fn fftNonPowerOfTwo(allocator: std.mem.Allocator) void {
     out.deinit(allocator);
 }
 
+fn fftStatic(allocator: std.mem.Allocator) void {
+    const transform = dsp.transforms.FourierStatic(f32, .fft_4096);
+
+    const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var sine: [4096]f32 = undefined;
+    sineGeneration.generate(&sine);
+
+    // this could easily be a fixed-size allocator and would improve performance
+    // as complex vector is always modified in place
+    var complex_vec = transform.createComplexVector(allocator, &sine) catch |err| {
+        std.debug.print("Error: {}\n", .{err});
+        return;
+    };
+
+    defer complex_vec.deinit();
+
+    complex_vec = transform.fft(&complex_vec) catch |err| {
+        std.debug.print("Error: {}\n", .{err});
+        return;
+    };
+}
+
 pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
     const allocator = std.heap.page_allocator;
@@ -42,5 +64,6 @@ pub fn main() !void {
 
     try bench.add("fft power-of-2", fftPowerOfTwo, .{});
     try bench.add("fft non power-of-2", fftNonPowerOfTwo, .{});
+    try bench.add("fft static", fftStatic, .{});
     try bench.run(stdout);
 }
