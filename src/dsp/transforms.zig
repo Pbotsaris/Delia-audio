@@ -10,9 +10,106 @@ const Direction = enum {
 };
 
 const Error = error{
-    invalidInput,
+    invalid_input_size,
     overflow,
 } || std.mem.Allocator.Error;
+
+pub fn FourierStatic(comptime T: type, comptime size: usize) type {
+    if (T != f32 and T != f64) {
+        @compileError("FourierTransforms only supports f32 and f64");
+    }
+
+    return struct {
+        const ComplexType = std.math.Complex(T);
+        const MultiArrayList = std.MultiArrayList(ComplexType);
+
+        const fft_size: usize = size;
+        const levels: usize = calculateLevels(size);
+
+        var internal_buffer: [size * @sizeOf(ComplexType)]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&internal_buffer);
+        const allocator = fba.allocator();
+
+        pub fn createComplexVector(heap_allocator: std.mem.Allocator, vec: []T) !MultiArrayList {
+            if (vec.len != fft_size) return Error.invalidInput;
+
+            var out = MultiArrayList{};
+            try out.setCapacity(heap_allocator, vec.len);
+
+            for (vec) |item| try out.append(heap_allocator, ComplexType.init(item, 0));
+
+            return out;
+        }
+
+        pub fn fft(inout: *MultiArrayList) Error!MultiArrayList {
+            if (inout.len != fft_size) return Error.invalidInput;
+
+            return fftRadix2(inout, .forward);
+        }
+
+        pub fn ifft(inout: *MultiArrayList) Error!MultiArrayList {
+            if (inout.len != fft_size) return Error.invalidInput;
+
+            return fftRadix2(inout, .inverse);
+        }
+
+        fn fftRadix2(inout: *MultiArrayList, direction: Direction) Error!MultiArrayList {
+            var exp_table = MultiArrayList{};
+            const exp_table_len: usize = @divFloor(fft_size, 2);
+
+            defer exp_table.deinit(allocator);
+            try exp_table.setCapacity(allocator, exp_table_len);
+
+            for (0..exp_table_len) |i| {
+                const pi: T = if (direction == .inverse) -2.0 * std.math.pi else 2.0 * std.math.pi;
+                const phase: T = pi * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(inout.len));
+                const exp = ComplexType.init(std.math.cos(phase), -std.math.sin(phase));
+
+                try exp_table.append(allocator, exp);
+            }
+
+            // bit-reversal permutation
+            // https://en.wikipedia.org/wiki/Bit-reversal_permutation
+            for (0..fft_size) |idx| {
+                const rev_idx = reverseBits(idx, levels);
+
+                if (idx > rev_idx) {
+                    const tmp = inout.get(idx);
+                    inout.set(idx, inout.get(rev_idx));
+                    inout.set(rev_idx, tmp);
+                }
+            }
+
+            // Cooley-Tukey decimation-in-time radix-2 FFT
+            var full_size: usize = 2;
+
+            while (full_size <= fft_size) : (full_size *= 2) {
+                const half_size: usize = @divFloor(full_size, 2);
+                const table_step: usize = @divFloor(inout.len, full_size);
+                var idx: usize = 0;
+
+                while (idx < fft_size) : (idx += full_size) {
+                    var inner_idx = idx;
+                    var table_idx: usize = 0;
+
+                    while (inner_idx < idx + half_size) : (inner_idx += 1) {
+                        const out_idx = inner_idx + half_size;
+                        const tmp = inout.get(out_idx).mul(exp_table.get(table_idx));
+                        inout.set(out_idx, inout.get(inner_idx).sub(tmp));
+                        inout.set(inner_idx, inout.get(inner_idx).add(tmp));
+
+                        table_idx += table_step;
+                    }
+                }
+
+                // Prevent overflow in 'size *= 2'
+                if (full_size == fft_size) break;
+            }
+
+            return inout.*;
+        }
+    };
+}
 
 pub fn FourierDynamic(comptime T: type) type {
     if (T != f32 and T != f64) {
@@ -23,7 +120,7 @@ pub fn FourierDynamic(comptime T: type) type {
         const ComplexType = std.math.Complex(T);
         const MultiArrayList = std.MultiArrayList(ComplexType);
 
-        // This implementation is O(n^2)
+        // This implementation is O(n^2) and used for testing purposes
         pub fn dft(allocator: std.mem.Allocator, in: []T) !MultiArrayList {
             var out = MultiArrayList{};
             try out.setCapacity(allocator, in.len);
@@ -91,7 +188,7 @@ pub fn FourierDynamic(comptime T: type) type {
 
         fn fftRadix2(allocator: std.mem.Allocator, inout: *MultiArrayList, direction: Direction) Error!MultiArrayList {
             // sanity check for power of two
-            if (!isPowerOfTwo(inout.len)) return Error.invalidInput;
+            if (!isPowerOfTwo(inout.len)) return Error.invalid_input_size;
 
             // calculate "levels"  needed to split the input down to a single element
             // "levels" is then the number of times the input can be divided by 2
@@ -116,8 +213,6 @@ pub fn FourierDynamic(comptime T: type) type {
                 try exp_table.append(allocator, exp);
             }
 
-            // bit-reversal permutation
-            // https://en.wikipedia.org/wiki/Bit-reversal_permutation
             for (0..inout.len) |idx| {
                 const rev_idx = reverseBits(idx, levels);
 
@@ -150,7 +245,6 @@ pub fn FourierDynamic(comptime T: type) type {
                     }
                 }
 
-                // Prevent overflow in 'size *= 2'
                 if (size == inout.len) break;
             }
 
@@ -272,6 +366,15 @@ fn findShiftWidth(n: usize) usize {
 
 fn isPowerOfTwo(n: usize) bool {
     return n != 0 and n & (n - 1) == 0;
+}
+
+fn calculateLevels(comptime fft_size: usize) usize {
+    var levels: usize = 0;
+    var n: usize = fft_size;
+
+    while (n > 1) : (n >>= 1) levels += 1;
+
+    return levels;
 }
 
 const testing = std.testing;
