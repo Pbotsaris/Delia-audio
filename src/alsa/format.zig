@@ -7,7 +7,7 @@ pub const SampleType = @import("settings.zig").SampleType;
 const AlsaError = @import("error.zig").AlsaError;
 
 const c_alsa = @cImport({
-    @cInclude("alsa_wrapper.h");
+    @cInclude("asoundlib.h");
 });
 
 pub fn Format(comptime T: type) type {

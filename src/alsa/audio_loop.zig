@@ -4,7 +4,7 @@ const Device = @import("device.zig").Device;
 const FormatType = @import("settings.zig").FormatType;
 
 const c_alsa = @cImport({
-    @cInclude("alsa_wrapper.h");
+    @cInclude("asoundlib.h");
 });
 
 const log = std.log.scoped(.alsa);

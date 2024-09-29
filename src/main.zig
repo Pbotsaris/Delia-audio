@@ -12,7 +12,7 @@ const log = std.log.scoped(.main);
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    const transform = dsp.transforms.FourierTransforms(f32);
+    const transform = dsp.transforms.FourierDynamic(f32);
 
     for (0..50) |_| {
         const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);

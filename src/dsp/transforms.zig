@@ -4,20 +4,20 @@ const test_data = @import("test_data.zig");
 
 // nayuki.io/res/how-to-implement-the-discrete-fourier-transform/
 
-pub fn FourierTransforms(comptime T: type) type {
+const Direction = enum {
+    forward,
+    inverse,
+};
+
+const Error = error{
+    invalidInput,
+    overflow,
+} || std.mem.Allocator.Error;
+
+pub fn FourierDynamic(comptime T: type) type {
     if (T != f32 and T != f64) {
         @compileError("FourierTransforms only supports f32 and f64");
     }
-
-    const Direction = enum {
-        forward,
-        inverse,
-    };
-
-    const Error = error{
-        invalidInput,
-        overflow,
-    } || std.mem.Allocator.Error;
 
     return struct {
         const ComplexType = std.math.Complex(T);
@@ -78,6 +78,8 @@ pub fn FourierTransforms(comptime T: type) type {
 
             return out;
         }
+
+        // Private
 
         fn fftComplex(allocator: std.mem.Allocator, inout: *MultiArrayList, direction: Direction) Error!MultiArrayList {
             if (inout.len == 0) return MultiArrayList{};
@@ -216,7 +218,7 @@ pub fn FourierTransforms(comptime T: type) type {
             return inout.*;
         }
 
-        pub fn convolve(allocator: std.mem.Allocator, avec: *MultiArrayList, bvec: *MultiArrayList) !MultiArrayList {
+        fn convolve(allocator: std.mem.Allocator, avec: *MultiArrayList, bvec: *MultiArrayList) !MultiArrayList {
             var avec_ffted = try fftComplex(allocator, avec, Direction.forward);
             const bvec_ffted = try fftComplex(allocator, bvec, Direction.forward);
 
@@ -226,9 +228,6 @@ pub fn FourierTransforms(comptime T: type) type {
 
             var avec_inversed = try fftComplex(allocator, &avec_ffted, Direction.inverse);
 
-            // we must scale as this implementation ommits scaling for inverse fft
-            //TODO:  Look into refactoring to have scaling as an option
-
             for (0..avec_inversed.len) |i| {
                 const len = ComplexType.init(@as(T, @floatFromInt(avec_inversed.len)), 0);
                 avec_inversed.set(i, avec_inversed.get(i).div(len));
@@ -236,41 +235,43 @@ pub fn FourierTransforms(comptime T: type) type {
 
             return avec_inversed;
         }
-
-        //  fft_idx: index to be reversed
-        //  width: the number of bits to reverse based on fft levels
-        //  e.g. so if in.len = 8, width would be 3 because log2(8) = 3
-        fn reverseBits(fft_idx: usize, width: usize) usize {
-            // u6 because usize is 64 bits and log2(64) = 6
-            return @bitReverse(fft_idx) >> @as(u6, @intCast(@bitSizeOf(usize) - width));
-        }
-
-        fn reverseBitsDiscrete(val: usize, width: usize) usize {
-            var result: usize = 0;
-            var idx: usize = val;
-            var i: usize = 0;
-
-            while (i < width) : (i += 1) {
-                result = (result << 1) | (idx & 1);
-                idx >>= 1;
-            }
-
-            return result;
-        }
-
-        fn findShiftWidth(n: usize) usize {
-            var width: usize = 0;
-            var tmp: usize = n;
-
-            while (tmp > 1) : (tmp >>= 1) width += 1;
-
-            return width;
-        }
-
-        fn isPowerOfTwo(n: usize) bool {
-            return n != 0 and n & (n - 1) == 0;
-        }
     };
+}
+
+// Utility function t
+
+//  fft_idx: index to be reversed
+//  width: the number of bits to reverse based on fft levels
+//  e.g. so if in.len = 8, width would be 3 because log2(8) = 3
+fn reverseBits(fft_idx: usize, width: usize) usize {
+    // u6 because usize is 64 bits and log2(64) = 6
+    return @bitReverse(fft_idx) >> @as(u6, @intCast(@bitSizeOf(usize) - width));
+}
+
+fn reverseBitsDiscrete(val: usize, width: usize) usize {
+    var result: usize = 0;
+    var idx: usize = val;
+    var i: usize = 0;
+
+    while (i < width) : (i += 1) {
+        result = (result << 1) | (idx & 1);
+        idx >>= 1;
+    }
+
+    return result;
+}
+
+fn findShiftWidth(n: usize) usize {
+    var width: usize = 0;
+    var tmp: usize = n;
+
+    while (tmp > 1) : (tmp >>= 1) width += 1;
+
+    return width;
+}
+
+fn isPowerOfTwo(n: usize) bool {
+    return n != 0 and n & (n - 1) == 0;
 }
 
 const testing = std.testing;
@@ -279,7 +280,7 @@ test "dft simple" {
     const allocator = std.testing.allocator;
     var input_signal = [_]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75, -1.0 };
 
-    const transforms = FourierTransforms(f32);
+    const transforms = FourierDynamic(f32);
     var output = try transforms.dft(allocator, &input_signal);
     defer output.deinit(allocator);
 
@@ -298,7 +299,7 @@ test "dft sine" {
     var sine: [128]f32 = undefined;
     sineGeneration.generate(&sine);
 
-    const transforms = FourierTransforms(f32);
+    const transforms = FourierDynamic(f32);
     var output = try transforms.dft(allocator, &sine);
     defer output.deinit(allocator);
 
@@ -312,11 +313,11 @@ test "dft sine" {
     }
 }
 
-test "fft simple power of 2" {
+test "dynamic fft simple power of 2" {
     const allocator = std.testing.allocator;
     var input_signal = [8]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75 };
 
-    const transforms = FourierTransforms(f32);
+    const transforms = FourierDynamic(f32);
     var fft_out = try transforms.fft(allocator, &input_signal);
     var dft_out = try transforms.dft(allocator, &input_signal);
     defer fft_out.deinit(allocator);
@@ -331,11 +332,11 @@ test "fft simple power of 2" {
     }
 }
 
-test "fft simple non power of 2" {
+test "dynamic fft simple non power of 2" {
     const allocator = std.testing.allocator;
     var input_signal = [9]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75, -1.0 };
 
-    const transforms = FourierTransforms(f32);
+    const transforms = FourierDynamic(f32);
     var fft_out = try transforms.fft(allocator, &input_signal);
     var dft_out = try transforms.dft(allocator, &input_signal);
     defer fft_out.deinit(allocator);
@@ -350,11 +351,11 @@ test "fft simple non power of 2" {
     }
 }
 
-test "inverse fft simple power of two" {
+test "dynamic inverse fft simple power of two" {
     const allocator = std.testing.allocator;
     var input_signal = [8]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, 0.75 };
 
-    const transforms = FourierTransforms(f32);
+    const transforms = FourierDynamic(f32);
 
     var fft_out = try transforms.fft(allocator, &input_signal);
     defer fft_out.deinit(allocator);
@@ -367,11 +368,11 @@ test "inverse fft simple power of two" {
     }
 }
 
-test "inverse fft simple power non power of two" {
+test "dynamic inverse fft simple power non power of two" {
     const allocator = std.testing.allocator;
     var input_signal = [9]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, 0.75, -1.0 };
 
-    const transforms = FourierTransforms(f32);
+    const transforms = FourierDynamic(f32);
 
     var fft_out = try transforms.fft(allocator, &input_signal);
     defer fft_out.deinit(allocator);
@@ -384,14 +385,14 @@ test "inverse fft simple power non power of two" {
     }
 }
 
-test "fft sine multiple of 2" {
+test "dynamic fft sine power of two" {
     const allocator = std.testing.allocator;
 
     const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
     var sine: [128]f32 = undefined;
     sineGeneration.generate(&sine);
 
-    const transforms = FourierTransforms(f32);
+    const transforms = FourierDynamic(f32);
     var output = try transforms.fft(allocator, &sine);
     defer output.deinit(allocator);
 
@@ -405,31 +406,49 @@ test "fft sine multiple of 2" {
     }
 }
 
-test "bit reverse test n = 8" {
-    const transform = FourierTransforms(f32);
+test "dynamic inverse fft sine wave power non power of two" {
+    const allocator = std.testing.allocator;
 
+    const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var sine: [128]f32 = undefined;
+    sineGeneration.generate(&sine);
+
+    const transforms = FourierDynamic(f32);
+    var output = try transforms.fft(allocator, &sine);
+    defer output.deinit(allocator);
+
+    var fft_out = try transforms.fft(allocator, &sine);
+    defer fft_out.deinit(allocator);
+
+    var inversed = try transforms.ifft(allocator, &fft_out);
+
+    for (0..sine.len) |i| {
+        const inversed_item = inversed.get(i);
+        try testing.expectApproxEqAbs(sine[i], inversed_item.re, 0.0001);
+    }
+}
+
+test "bit reverse test n = 8" {
     const indices = [8]usize{ 0, 1, 2, 3, 4, 5, 6, 7 };
     const expected = [8]usize{ 0, 4, 2, 6, 1, 5, 3, 7 }; // Bit-reversed indices for n = 8
     const width = 3; // log2(8) = 3
 
     for (indices, 0..indices.len) |idx, i| {
-        const result1 = transform.reverseBits(idx, width);
-        const result2 = transform.reverseBitsDiscrete(idx, width);
+        const result1 = reverseBits(idx, width);
+        const result2 = reverseBitsDiscrete(idx, width);
         try testing.expectEqual(expected[i], result1);
         try testing.expectEqual(expected[i], result2);
     }
 }
 
 test "bit reverse test for n = 16" {
-    const transform = FourierTransforms(f32);
-
     const indices = [16]usize{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
     const expected = [16]usize{ 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 }; // Bit-reversed indices for n = 16
     const width = 4; // log2(16) = 4
 
     for (indices, 0..indices.len) |idx, i| {
-        const result1 = transform.reverseBits(idx, width);
-        const result2 = transform.reverseBitsDiscrete(idx, width);
+        const result1 = reverseBits(idx, width);
+        const result2 = reverseBitsDiscrete(idx, width);
         try testing.expectEqual(expected[i], result1);
         try testing.expectEqual(expected[i], result2);
     }

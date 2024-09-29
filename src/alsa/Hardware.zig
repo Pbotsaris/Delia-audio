@@ -17,7 +17,7 @@ const ChannelCount = @import("settings.zig").ChannelCount;
 pub const AudioCard = @import("AudioCard.zig");
 
 const c_alsa = @cImport({
-    @cInclude("alsa_wrapper.h");
+    @cInclude("asoundlib.h");
 });
 
 const Hardware = @This();
