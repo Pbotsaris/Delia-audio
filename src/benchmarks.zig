@@ -3,7 +3,6 @@ const dsp = @import("dsp/dsp.zig");
 const zbench = @import("zbench");
 
 fn fftPowerOfTwo(allocator: std.mem.Allocator) void {
-    //
     const transform = dsp.transforms.FourierDynamic(f32);
 
     const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
