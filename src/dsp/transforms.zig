@@ -9,7 +9,7 @@ const Direction = enum {
     inverse,
 };
 
-const FFTSize = enum(usize) {
+pub const FFTSize = enum(usize) {
     fft_2 = 2,
     fft_4 = 4,
     fft_8 = 8,
@@ -46,8 +46,8 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
     }
 
     return struct {
-        const ComplexType = std.math.Complex(T);
-        const ComplexVector = std.MultiArrayList(ComplexType);
+        pub const ComplexType = std.math.Complex(T);
+        pub const ComplexVector = std.MultiArrayList(ComplexType);
 
         const fft_size: usize = @intFromEnum(size);
         const levels: usize = std.math.log2(fft_size);
@@ -55,6 +55,14 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
         var internal_buffer: [fft_size * @sizeOf(ComplexType)]u8 = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&internal_buffer);
         const allocator = fba.allocator();
+
+        pub fn complexVectorSize() usize {
+            return fft_size * @sizeOf(ComplexType);
+        }
+
+        pub fn maxBinCount() usize {
+            return @divFloor(fft_size, 2);
+        }
 
         /// A helper function to initialize a `ComplexVector` from an audio signal vector.
         ///
@@ -84,6 +92,32 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
 
             for (input, 0..input.len) |item, i| {
                 vec.set(i, ComplexType.init(item, 0));
+            }
+
+            return vec.*;
+        }
+
+        /// Fills the `ComplexVector` with input data and pads the remaining buffer with zeros.
+        /// This is useful when the input signal length is smaller than the `ComplexVector` buffer size.
+        /// The remaining unused space in the buffer is zero-padded.
+        /// The input signal must not exceed the vector size and/or the `fft_size`.
+        ///
+        /// - **Parameters**:
+        ///     - `vec`: The `ComplexVector` to be partially filled and padded.
+        ///     - `input`: The input signal to be written into the `ComplexVector`. Can be smaller than the buffer size.
+        /// - **Returns**: The updated `ComplexVector`, padded with zeros for the remaining space.
+        /// Throws an error if the input exceeds the buffer size.
+        pub fn fillComplexVectorWithPadding(vec: *ComplexVector, input: []T) Error!ComplexVector {
+            if (input.len > vec.len or input.len > fft_size) return Error.invalid_input_size;
+
+            if (input.len == vec.len) return fillComplexVector(vec, input);
+
+            for (input, 0..input.len) |item, i| {
+                vec.set(i, ComplexType.init(item, 0));
+            }
+
+            for (input.len..vec.len) |i| {
+                vec.set(i, ComplexType.init(0, 0));
             }
 
             return vec.*;
@@ -127,7 +161,7 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
         ///     - `vec`: The `ComplexVector` containing complex FFT data.
         ///     - `out`: Output buffer to store magnitudes.
         /// - **Returns**: Filled output buffer. Throws an error if sizes do not match.
-        pub fn magnitude(vec: *ComplexVector, out: []T) Error![]T {
+        pub fn magnitude(vec: ComplexVector, out: []T) Error![]T {
             if (vec.len != out.len) return Error.invalid_input_size;
 
             for (0..vec.len) |i| {
@@ -143,7 +177,7 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
         ///     - `vec`: The `ComplexVector` containing complex FFT data.
         ///     - `out`: Output buffer to store phase angles.
         /// - **Returns**: Filled output buffer. Throws an error if sizes do not match.
-        pub fn phase(vec: *ComplexVector, out: []T) Error![]T {
+        pub fn phase(vec: ComplexVector, out: []T) Error![]T {
             if (vec.len != out.len) return Error.invalid_input_size;
 
             for (0..vec.len) |i| {
@@ -349,7 +383,7 @@ pub fn FourierDynamic(comptime T: type) type {
         ///     - `allocator`: The memory allocator used to allocate the output buffer.
         ///     - `vec`: The `ComplexVector` containing complex FFT data.
         /// - **Returns**: Allocated buffer filled with magnitudes. Throws an error if allocation fails.
-        pub fn magnitude(allocator: std.mem.Allocator, vec: *ComplexVector) Error![]T {
+        pub fn magnitude(allocator: std.mem.Allocator, vec: ComplexVector) Error![]T {
             const out = try allocator.alloc(T, vec.len);
 
             for (0..vec.len) |i| {
@@ -366,7 +400,7 @@ pub fn FourierDynamic(comptime T: type) type {
         ///     - `allocator`: The memory allocator used to allocate the output buffer.
         ///     - `vec`: The `ComplexVector` containing complex FFT data.
         /// - **Returns**: Allocated buffer filled with phase angles. Throws an error if allocation fails.
-        pub fn phase(allocator: std.mem.Allocator, vec: *ComplexVector) Error![]T {
+        pub fn phase(allocator: std.mem.Allocator, vec: ComplexVector) Error![]T {
             const out = try allocator.alloc(T, vec.len);
 
             for (0..vec.len) |i| {
@@ -720,7 +754,7 @@ test "FourierDynamic: magnitude calculation" {
     var complex_vector = try transform.fft(allocator, &input);
     defer complex_vector.deinit(allocator);
 
-    const magnitudes = try transform.magnitude(allocator, &complex_vector);
+    const magnitudes = try transform.magnitude(allocator, complex_vector);
     defer allocator.free(magnitudes);
 
     const expected = [len]f32{ 1.0, 2.613125929752753, 1.4142135623730951, 1.082392200292394, 1.0, 1.082392200292394, 1.4142135623730951, 2.613125929752753 };
@@ -741,7 +775,7 @@ test "FourierDynamic: phases calculation" {
     var complex_vector = try transform.fft(allocator, &input);
     defer complex_vector.deinit(allocator);
 
-    const phases = try transform.phase(allocator, &complex_vector);
+    const phases = try transform.phase(allocator, complex_vector);
     defer allocator.free(phases);
     const expected = [len]f32{ 0.0, -1.1780972450961724, -0.7853981633974483, -0.39269908169872425, 0.0, 0.39269908169872425, 0.7853981633974483, 1.1780972450961724 };
 
@@ -819,7 +853,7 @@ test "FourierStatic: magnitude calculation" {
 
     var buffer: [len]f32 = undefined;
 
-    const magnitudes = try transform.magnitude(&complex_vector, &buffer);
+    const magnitudes = try transform.magnitude(complex_vector, &buffer);
     const expected = [len]f32{ 1.0, 2.613125929752753, 1.4142135623730951, 1.082392200292394, 1.0, 1.082392200292394, 1.4142135623730951, 2.613125929752753 };
 
     for (magnitudes, 0..magnitudes.len) |item, i| {
@@ -841,7 +875,7 @@ test "FourierStatic: phase calculation" {
 
     var buffer: [len]f32 = undefined;
 
-    const phases = try transform.phase(&complex_vector, &buffer);
+    const phases = try transform.phase(complex_vector, &buffer);
     const expected = [len]f32{ 0.0, -1.1780972450961724, -0.7853981633974483, -0.39269908169872425, 0.0, 0.39269908169872425, 0.7853981633974483, 1.1780972450961724 };
 
     for (phases, 0..phases.len) |item, i| {

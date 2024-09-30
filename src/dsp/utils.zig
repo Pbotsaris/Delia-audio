@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn Utils(comptime T: type) type {
-    if (T != f32 or T != f64) {
+    if (T != f32 and T != f64) {
         @compileError("Only f32 and f64 are supported");
     }
 
@@ -16,10 +16,21 @@ pub fn Utils(comptime T: type) type {
             return reference * std.math.pow(10.0, db / 20.0);
         }
 
-        pub fn frequencyBins(n: T, sample_rate: T, out: []T) T {
-            for (0..(n / 2)) |k| out[k] = (k * sample_rate) / n;
+        pub fn frequencyBins(n: T, sample_rate: T, out: []T) []T {
+            const bin_count: usize = @intFromFloat(@divFloor(n, 2.0));
+
+            for (0..bin_count) |k| out[k] = (@as(T, @floatFromInt(k)) * sample_rate) / n;
 
             return out;
+        }
+
+        pub fn nyquist(sample_rate: T) T {
+            return sample_rate / 2.0;
+        }
+
+        pub fn largestPowerOfTwo(size: T) T {
+            const exp: T = std.math.floor(std.math.log2(size));
+            return std.math.pow(2.0, exp);
         }
     };
 }
