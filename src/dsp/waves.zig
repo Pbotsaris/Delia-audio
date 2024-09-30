@@ -17,7 +17,7 @@ pub fn Sine(comptime T: type) type {
             return .{ .freq = freq, .amp = amp, .sr = sr };
         }
 
-        pub fn generate(self: Self, output: []T) void {
+        pub fn generate(self: Self, output: []T) []T {
             var phase: T = 0;
             const phase_inc: T = two * std.math.pi * self.freq / self.sr;
 
@@ -29,6 +29,8 @@ pub fn Sine(comptime T: type) type {
                     phase -= two * std.math.pi;
                 }
             }
+
+            return output;
         }
     };
 }

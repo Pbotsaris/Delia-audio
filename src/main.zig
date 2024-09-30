@@ -17,12 +17,10 @@ pub fn main() !void {
     for (0..50) |_| {
         const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
 
-        var sine: [4099]f32 = undefined;
-        //
+        var buffer: [4099]f32 = undefined;
+        const sine = sineGeneration.generate(&buffer);
 
-        sineGeneration.generate(&sine);
-
-        var out = transform.fft(allocator, &sine) catch |err| {
+        var out = transform.fft(allocator, sine) catch |err| {
             std.debug.print("Error: {}\n", .{err});
             return;
         };

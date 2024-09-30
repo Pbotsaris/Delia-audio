@@ -79,7 +79,7 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
         ///     - `vec`: The `ComplexVector` to be reused.
         ///     - `input`: The new input signal to be written into the `ComplexVector`.
         /// - **Returns**: Updated `ComplexVector`. Throws an error if input size is invalid.
-        pub fn setComplexVector(vec: *ComplexVector, input: []T) Error!ComplexVector {
+        pub fn fillComplexVector(vec: *ComplexVector, input: []T) Error!ComplexVector {
             if (vec.len != input.len or vec.len != fft_size) return Error.invalid_input_size;
 
             for (input, 0..input.len) |item, i| {
@@ -551,15 +551,6 @@ fn reverseBitsDiscrete(val: usize, width: usize) usize {
     return result;
 }
 
-fn findShiftWidth(n: usize) usize {
-    var width: usize = 0;
-    var tmp: usize = n;
-
-    while (tmp > 1) : (tmp >>= 1) width += 1;
-
-    return width;
-}
-
 fn isPowerOfTwo(n: usize) bool {
     return n != 0 and n & (n - 1) == 0;
 }
@@ -586,11 +577,11 @@ test "FourierDynamic: dft sine" {
     const allocator = std.testing.allocator;
 
     const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
-    var sine: [128]f32 = undefined;
-    sineGeneration.generate(&sine);
+    var buffer: [128]f32 = undefined;
+    const sine = sineGeneration.generate(&buffer);
 
     const transforms = FourierDynamic(f32);
-    var output = try transforms.dft(allocator, &sine);
+    var output = try transforms.dft(allocator, sine);
     defer output.deinit(allocator);
 
     try testing.expectEqual(output.len, test_data.expected_sine_dft.len);
@@ -679,11 +670,11 @@ test "FourierDynamic: fft sine power of two" {
     const allocator = std.testing.allocator;
 
     const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
-    var sine: [128]f32 = undefined;
-    sineGeneration.generate(&sine);
+    var buffer: [128]f32 = undefined;
+    const sine = sineGeneration.generate(&buffer);
 
     const transforms = FourierDynamic(f32);
-    var output = try transforms.fft(allocator, &sine);
+    var output = try transforms.fft(allocator, sine);
     defer output.deinit(allocator);
 
     try testing.expectEqual(output.len, test_data.expected_sine_dft.len);
@@ -700,21 +691,21 @@ test "FourierDynamic: inverse fft sine wave power non power of two" {
     const allocator = std.testing.allocator;
 
     const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
-    var sine: [128]f32 = undefined;
-    sineGeneration.generate(&sine);
+    var buffer: [128]f32 = undefined;
+    const sine = sineGeneration.generate(&buffer);
 
     const transforms = FourierDynamic(f32);
-    var output = try transforms.fft(allocator, &sine);
+    var output = try transforms.fft(allocator, sine);
     defer output.deinit(allocator);
 
-    var fft_out = try transforms.fft(allocator, &sine);
+    var fft_out = try transforms.fft(allocator, &buffer);
     defer fft_out.deinit(allocator);
 
     var inversed = try transforms.ifft(allocator, &fft_out);
 
-    for (0..sine.len) |i| {
+    for (0..buffer.len) |i| {
         const inversed_item = inversed.get(i);
-        try testing.expectApproxEqAbs(sine[i], inversed_item.re, 0.0001);
+        try testing.expectApproxEqAbs(buffer[i], inversed_item.re, 0.0001);
     }
 }
 
@@ -809,7 +800,7 @@ test "FourierStatic: fft multiple simple input" {
 
         // reset the input signal
         if (i + 1 < input_signal.len) {
-            complex_vec = try transform.setComplexVector(&complex_vec, &input_signal[i + 1]);
+            complex_vec = try transform.fillComplexVector(&complex_vec, &input_signal[i + 1]);
         }
     }
 }
