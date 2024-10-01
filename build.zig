@@ -41,7 +41,6 @@ pub fn build(b: *std.Build) void {
 
     exe_check.linkLibC();
     exe_check.linkSystemLibrary("asound");
-    exe_check.addIncludePath(b.path("src/c"));
     const check = b.step("check", "Check if the app compile");
     check.dependOn(&exe_check.step);
 

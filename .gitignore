@@ -1,2 +1,12 @@
 zig-out
 .zig-cache
+**/__pycache__/
+pydelia-build/pydelia.egg-info
+pydelia-build/build
+pydelia-build/_pydelia.cpython-*
+pydelia-build/pydelia.cpython-*
+pydelia-build/delia.cpython-*
+pydelia-build/pydelia/__pycache__
+pydelia-build/pydelia/__pycache__/
+
+

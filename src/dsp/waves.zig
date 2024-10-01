@@ -10,11 +10,15 @@ pub fn Sine(comptime T: type) type {
         amp: T,
         sr: T,
 
-        const Self = @This();
         const two: T = 2;
+        const Self = @This();
 
         pub fn init(freq: T, amp: T, sr: T) Self {
             return .{ .freq = freq, .amp = amp, .sr = sr };
+        }
+
+        pub fn bufferSizeFor(self: Self, seconds: T) usize {
+            return @intFromFloat(self.sr * seconds);
         }
 
         pub fn generate(self: Self, output: []T) []T {
