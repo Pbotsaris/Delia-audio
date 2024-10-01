@@ -8,3 +8,6 @@ def sine_wave(**kwargs):
     dur = kwargs.get('dur', 1.0)
     
     return _pydelia.sine_wave(freq, amp, sr, dur)
+
+def fft(vect):
+    return _pydelia.fft(vect)
