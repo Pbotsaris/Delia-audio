@@ -9,6 +9,13 @@ const Direction = enum {
     inverse,
 };
 
+pub const std_options = .{
+    .log_level = .err,
+    .logFn = @import("../logging.zig").logFn,
+};
+
+const log = std.log.scoped(.transforms);
+
 pub const FFTSize = enum(usize) {
     fft_2 = 2,
     fft_4 = 4,
@@ -70,13 +77,21 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
         ///     - `heap_allocator`: Allocator for the `ComplexVector`.
         ///     - `vec`: Input vector containing the audio signal.
         /// - **Returns**: Initialized `ComplexVector`. Throws an error if the input size is invalid.
-        pub fn createComplexVector(heap_allocator: std.mem.Allocator, vec: []T) !ComplexVector {
+        pub fn createComplexVectorFrom(heap_allocator: std.mem.Allocator, vec: []T) !ComplexVector {
             if (vec.len != fft_size) return Error.invalid_input_size;
 
             var out = ComplexVector{};
             try out.setCapacity(heap_allocator, fft_size);
 
-            for (vec) |item| try out.append(allocator, ComplexType.init(item, 0));
+            for (vec) |item| try out.append(heap_allocator, ComplexType.init(item, 0));
+
+            return out;
+        }
+
+        pub fn createUninitializedComplexVector(heap_allocator: std.mem.Allocator) !ComplexVector {
+            var out = ComplexVector{};
+            try out.setCapacity(heap_allocator, fft_size);
+            try out.resize(heap_allocator, fft_size);
 
             return out;
         }
@@ -210,7 +225,12 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
             const exp_table_len: usize = @divFloor(fft_size, 2);
 
             var exp_table = ComplexVector{};
-            try exp_table.setCapacity(allocator, exp_table_len);
+
+            exp_table.setCapacity(allocator, exp_table_len) catch |err| {
+                log.err("Error setting capacity for exp_table: {any}", .{err});
+                return err;
+            };
+
             defer exp_table.deinit(allocator);
 
             for (0..exp_table_len) |i| {
@@ -218,7 +238,10 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
                 const angle: T = pi * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(inout.len));
                 const exp = ComplexType.init(std.math.cos(angle), -std.math.sin(angle));
 
-                try exp_table.append(allocator, exp);
+                exp_table.append(allocator, exp) catch |err| {
+                    log.err("Error appending to exp_table: {any}", .{err});
+                    return err;
+                };
             }
 
             // bit-reversal permutation
@@ -278,8 +301,22 @@ pub fn FourierDynamic(comptime T: type) type {
     }
 
     return struct {
-        const ComplexType = std.math.Complex(T);
-        const ComplexVector = std.MultiArrayList(ComplexType);
+        pub const ComplexType = std.math.Complex(T);
+        pub const ComplexVector = std.MultiArrayList(ComplexType);
+
+        /// A helper function to initialize a `ComplexVector` from an audio signal vector.
+        ///
+        /// - **Parameters**:
+        ///     - `heap_allocator`: Allocator for the `ComplexVector`.
+        ///     - `len`: The length of of the desired `ComplexVector`.
+        /// - **Returns**: Initialized `ComplexVector`. Errors if memory allocation fails.
+        pub fn createUninitializedComplexVector(heap_allocator: std.mem.Allocator, len: usize) !ComplexVector {
+            var out = ComplexVector{};
+            try out.resize(heap_allocator, len);
+            try out.setCapacity(heap_allocator, len);
+
+            return out;
+        }
 
         /// A simple Discrete Fourier Transform (DFT) implementation for testing purposes.
         ///
@@ -591,6 +628,24 @@ fn isPowerOfTwo(n: usize) bool {
 
 const testing = std.testing;
 
+test "FourierDynamic: create complex vector" {
+    const allocator = std.testing.allocator;
+    const transforms = FourierDynamic(f32);
+
+    var vec = try transforms.createUninitializedComplexVector(allocator, 8);
+    defer vec.deinit(allocator);
+
+    vec.set(0, transforms.ComplexType.init(1.0, 0.0));
+    vec.set(1, transforms.ComplexType.init(0.75, 0.0));
+
+    try testing.expectEqual(vec.get(0).re, 1.0);
+    try testing.expectEqual(vec.get(0).im, 0.0);
+    try testing.expectEqual(vec.get(1).re, 0.75);
+    try testing.expectEqual(vec.get(1).im, 0.0);
+
+    try testing.expectEqual(vec.len, 8);
+}
+
 test "FourierDynamic: dft simple" {
     const allocator = std.testing.allocator;
     var input_signal = [_]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75, -1.0 };
@@ -818,7 +873,7 @@ test "FourierStatic: fft multiple simple input" {
     // we need a complex vector to process the input
     // but the allocation can be done before the fft calculation
     // and it can be reused for multiple fft
-    var complex_vec = try transform.createComplexVector(allocator, &input_signal[0]);
+    var complex_vec = try transform.createComplexVectorFrom(allocator, &input_signal[0]);
     defer complex_vec.deinit(allocator);
 
     // transform 3 times. we always modify the same complex vector
@@ -846,7 +901,7 @@ test "FourierStatic: magnitude calculation" {
     const transform = FourierStatic(f32, .fft_8);
 
     var input = [len]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75 };
-    var complex_vector = try transform.createComplexVector(allocator, &input);
+    var complex_vector = try transform.createComplexVectorFrom(allocator, &input);
     defer complex_vector.deinit(allocator);
 
     complex_vector = try transform.fft(&complex_vector);
@@ -868,7 +923,7 @@ test "FourierStatic: phase calculation" {
     const transform = FourierStatic(f32, .fft_8);
 
     var input = [len]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75 };
-    var complex_vector = try transform.createComplexVector(allocator, &input);
+    var complex_vector = try transform.createComplexVectorFrom(allocator, &input);
     defer complex_vector.deinit(allocator);
 
     complex_vector = try transform.fft(&complex_vector);
@@ -891,10 +946,10 @@ test "FourierStatic: convolution" {
 
     const transform = FourierStatic(f32, .fft_8);
 
-    var complex_a = try transform.createComplexVector(allocator, &input_a);
+    var complex_a = try transform.createComplexVectorFrom(allocator, &input_a);
     defer complex_a.deinit(allocator);
 
-    var complex_b = try transform.createComplexVector(allocator, &input_b);
+    var complex_b = try transform.createComplexVectorFrom(allocator, &input_b);
     defer complex_b.deinit(allocator);
 
     var result = try transform.convolve(&complex_a, &complex_b);

@@ -35,7 +35,7 @@ pub fn fftSineWave() !void {
 
     const sine = sineGen.generate(&sine_buffer);
 
-    var complex_vec = try fft.createComplexVector(allocator, sine[0..bz]);
+    var complex_vec = try fft.createComplexVectorFrom(allocator, sine[0..bz]);
     var remaining: usize = size - bz;
     var current: usize = bz;
 
@@ -44,8 +44,8 @@ pub fn fftSineWave() !void {
 
         const data = try writeData(complex_vec);
         _ = data;
-
         complex_vec = try fft.fillComplexVector(&complex_vec, sine[current .. current + bz]);
+
         current += bz;
     }
 

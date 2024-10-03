@@ -41,7 +41,7 @@ fn fftStatic(allocator: std.mem.Allocator) void {
 
     // this could easily be a fixed-size allocator and would improve performance
     // as complex vector is always modified in place
-    var complex_vec = transform.createComplexVector(allocator, sine) catch |err| {
+    var complex_vec = transform.createComplexVectorFrom(allocator, sine) catch |err| {
         std.debug.print("Error: {}\n", .{err});
         return;
     };

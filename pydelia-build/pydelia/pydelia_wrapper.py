@@ -1,5 +1,6 @@
 
 import _pydelia 
+from typing import List
 
 def sine_wave(**kwargs):
     freq = kwargs.get('freq', 100.0)
@@ -9,5 +10,8 @@ def sine_wave(**kwargs):
     
     return _pydelia.sine_wave(freq, amp, sr, dur)
 
-def fft(vect):
-    return _pydelia.fft(vect)
+def fft(vec: List[float]) -> List[complex]:
+    return _pydelia.fft(vec)
+
+def ifft(vec: List[complex]) -> List[float]:
+    return _pydelia.ifft(vec)
