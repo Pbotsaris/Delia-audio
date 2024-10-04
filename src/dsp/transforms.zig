@@ -209,7 +209,7 @@ pub fn FourierStatic(comptime T: type, comptime size: FFTSize) type {
         /// - **Parameters**:
         ///     - `avec`, `bvec`: Input vectors to be convolved.
         /// - **Returns**: Convolved `ComplexVector`. Throws an error if input sizes are invalid.
-        fn convolve(avec: *ComplexVector, bvec: *ComplexVector) !ComplexVector {
+        pub fn convolve(avec: *ComplexVector, bvec: *ComplexVector) !ComplexVector {
             var avec_ffted = try fft(avec);
             const bvec_ffted = try fft(bvec);
 
