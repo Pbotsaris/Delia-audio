@@ -35,13 +35,31 @@ pub fn Utils(comptime T: type) type {
             return out;
         }
 
-        pub fn frequencyBinsAlloc(allocator: std.mem.Allocator, n: T, sample_rate: T) ![]T {
-            const bin_count: usize = @intFromFloat(@divFloor(n, 2.0));
+        pub fn frequencyBinsAlloc(allocator: std.mem.Allocator, fft_size: T, sample_rate: T) ![]T {
+            const bin_count: usize = @intFromFloat(@divFloor(fft_size, 2.0));
             const out = try allocator.alloc(T, bin_count);
 
-            for (0..bin_count) |k| out[k] = (@as(T, @floatFromInt(k)) * sample_rate) / n;
+            for (0..bin_count) |k| out[k] = (@as(T, @floatFromInt(k)) * sample_rate) / fft_size;
 
             return out;
+        }
+
+        pub fn blackman(index: usize, window_size: usize) T {
+            const indexf: T = @floatFromInt(index);
+            const windowf: T = @floatFromInt(window_size);
+
+            const first_harm: T = 2.0 * std.math.pi * indexf / (windowf - 1.0);
+            const second_harm: T = 4.0 * std.math.pi * indexf / (windowf - 1.0);
+
+            return 0.42 - 0.5 * std.math.cos(first_harm) + 0.08 * std.math.cos(second_harm);
+        }
+
+        pub fn hanning(index: usize, window_size: usize) T {
+            const indexf: T = @floatFromInt(index);
+            const windowf: T = @floatFromInt(window_size);
+
+            const harm: T = 2.0 * std.math.pi * indexf / (windowf - 1.0);
+            return 0.5 * (1.0 - std.math.cos(harm));
         }
 
         pub fn phase(x: ComplexType) T {

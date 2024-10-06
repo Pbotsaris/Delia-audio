@@ -12,13 +12,16 @@ const dsp = @import("dsp/dsp.zig");
 
 // using float64 across the board
 var zero: usize = 0;
-//
 const T: type = f64;
-//
 
 pub const std_options = .{
     .log_level = .err,
     .logFn = @import("logging.zig").logFn,
+};
+
+const WindowFunction = enum {
+    blackman,
+    hann,
 };
 
 const log = std.log.scoped(.delia);
@@ -52,6 +55,36 @@ fn magnitude(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*]py.Py
     }
 
     return pylist_result;
+}
+
+fn decibelFromMagnitude(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObject {
+    _ = self;
+
+    const pylist: [*c]py.PyObject = parseArgument(args, "O") //
+    orelse return @as([*c]py.PyObject, (@ptrFromInt(zero)));
+
+    const pylist_size: usize = @intCast(py.PyList_Size(pylist));
+    const utils = dsp.utils.Utils(T);
+
+    for (0..pylist_size) |i| {
+        const item = py.PyList_GetItem(pylist, @as(py.Py_ssize_t, @intCast(i)));
+
+        if (py.PyFloat_Check(item) == 0) {
+            return handleError(pylist, "List must contain only floats.");
+        }
+
+        // 0.5 reference gives 0db a sine +1 to -1
+        const db = utils.DecibelsFromMagnitude(py.PyFloat_AsDouble(item), 0.5);
+        const py_float: [*c]py.PyObject = py.PyFloat_FromDouble(db);
+
+        if (py_float == null) {
+            return handleError(pylist, "Failed to create float object.");
+        }
+
+        _ = py.PyList_SetItem(pylist, @as(py.Py_ssize_t, @intCast(i)), py_float);
+    }
+
+    return pylist;
 }
 
 fn phase(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObject {
@@ -325,7 +358,6 @@ fn fftFrequencies(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c
 
     for (0..out.len) |i| {
         const py_float: [*c]py.PyObject = py.PyFloat_FromDouble(out[i]);
-
         if (py_float == null) {
             return handleError(null, "Failed to create float object.");
         }
@@ -336,7 +368,62 @@ fn fftFrequencies(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c
     return outlist;
 }
 
+fn hanning(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObject {
+    return windowFunction(self, args, .hann);
+}
+
+fn blackman(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObject {
+    return windowFunction(self, args, .blackman);
+}
+
 // Helper functions
+
+fn windowFunction(self: [*c]py.PyObject, args: [*c]py.PyObject, wf: WindowFunction) [*c]py.PyObject {
+    _ = self;
+
+    const pylist = parseArgument(args, "O") orelse return @as([*c]py.PyObject, (@ptrFromInt(zero)));
+    const pylist_size: usize = @intCast(py.PyList_Size(pylist));
+
+    const pylist_result: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(pylist_size)));
+
+    if (pylist_result == null) {
+        return handleError(pylist_result, "Failed to create result list.");
+    }
+
+    const utils = dsp.utils.Utils(T);
+    var window_sum: T = undefined;
+
+    for (0..pylist_size) |i| {
+        const window_func: T =
+            if (wf == .hann) utils.hanning(i, pylist_size) else utils.blackman(i, pylist_size);
+
+        window_sum += window_func;
+    }
+
+    for (0..pylist_size) |i| {
+        const item = py.PyList_GetItem(pylist, @as(py.Py_ssize_t, @intCast(i)));
+
+        if (py.PyFloat_Check(item) == 0) {
+            return handleError(pylist, "List must contain only floats.");
+        }
+
+        const sample: T = py.PyFloat_AsDouble(item);
+
+        const window_func: T = //
+            if (wf == .hann) utils.hanning(i, pylist_size) else utils.blackman(i, pylist_size);
+
+        // note that we are normalizing the window function
+        const py_float: [*c]py.PyObject = py.PyFloat_FromDouble((sample * window_func) / window_sum);
+
+        if (py_float == null) {
+            return handleError(pylist_result, "Failed to create float object.");
+        }
+
+        _ = py.PyList_SetItem(pylist_result, @as(py.Py_ssize_t, @intCast(i)), py_float);
+    }
+
+    return pylist_result;
+}
 
 fn parseArgument(args: [*c]py.PyObject, format: [*c]const u8) ?*py.PyObject {
     var pylist: [*c]py.PyObject = null;
@@ -399,6 +486,26 @@ var methods = [_]py.PyMethodDef{
         .ml_meth = fftFrequencies,
         .ml_flags = py.METH_VARARGS,
         .ml_doc = "fft_frequencies(n: float, sample_rate: float) -> List[float]\n--\n\nGenerate a list of frequency bins for the FFT.",
+    },
+    py.PyMethodDef{
+        .ml_name = "decibels_from_magnitude",
+        .ml_meth = decibelFromMagnitude,
+        .ml_flags = py.METH_VARARGS,
+        .ml_doc = "decibel_from_magnitude(data: List[float]) -> List[float]\n--\n\nCalculate the decibels from the input magnitudes.",
+    },
+
+    py.PyMethodDef{
+        .ml_name = "hanning",
+        .ml_meth = hanning,
+        .ml_flags = py.METH_VARARGS,
+        .ml_doc = "hanning(data: List[float]) -> List[float]\n--\n\nApply a Hanning window to the input data.",
+    },
+
+    py.PyMethodDef{
+        .ml_name = "blackman",
+        .ml_meth = blackman,
+        .ml_flags = py.METH_VARARGS,
+        .ml_doc = "blackman(data: List[float]) -> List[float]\n--\n\nApply a Blackman window to the input data.",
     },
 };
 

@@ -25,22 +25,27 @@ def sine_wave(**kwargs):
 def fft(vec: List[float]) -> List[complex]:
     return _pydelia.fft(vec)
 
-
 def ifft(vec: List[complex]) -> List[float]:
     return _pydelia.ifft(vec)
-
 
 def magnitude(vec: List[complex]) -> List[float]:
     return _pydelia.magnitude(vec)
 
-
 def phase(vec: List[complex]) -> List[float]:
     return _pydelia.phase(vec)
-
 
 def fft_convolve(vec1: List[float], vec2: List[float]) -> List[float]:
     return _pydelia.fft_convolve(vec1, vec2)
 
 
-def fft_frequencies(sr: int, n: int) -> List[float]:
-    return _pydelia.fft_frequencies(sr, n)
+def fft_frequencies(n: int, sr: int) -> List[float]:
+    return _pydelia.fft_frequencies(n, sr)
+
+def decibels_from_magnitude(vec: List[float]) -> List[float]:
+    return _pydelia.decibels_from_magnitude(vec)
+
+def blackman(vec: List[float]) -> List[float]:
+    return _pydelia.blackman(vec)
+
+def hanning(vec: List[float]) -> List[float]:
+    return _pydelia.hanning(vec)
