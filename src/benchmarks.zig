@@ -33,7 +33,7 @@ fn fftNonPowerOfTwo(allocator: std.mem.Allocator) void {
 }
 
 fn fftStatic(allocator: std.mem.Allocator) void {
-    const transform = dsp.transforms.FourierStatic(f32, .fft_4096);
+    const transform = dsp.transforms.FourierStatic(f32, .wz_4096);
 
     const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
     var buffer: [4096]f32 = undefined;
