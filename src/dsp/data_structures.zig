@@ -136,6 +136,7 @@ pub fn Matrix(comptime T: type) type {
 
                         sum += row_value * col_value;
                     }
+
                     try result.set(row, col, sum);
                 }
             }
