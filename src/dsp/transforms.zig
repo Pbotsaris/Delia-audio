@@ -2,8 +2,7 @@ const std = @import("std");
 const waves = @import("waves.zig");
 const utils = @import("utils.zig");
 const test_data = @import("test_data.zig");
-
-// nayuki.io/res/how-to-implement-the-discrete-fourier-transform/
+const complex_list = @import("complex_list.zig");
 
 const Direction = enum {
     forward,
@@ -43,7 +42,7 @@ pub const WindowSize = enum(usize) {
 const Error = error{
     invalid_input_size,
     overflow,
-} || std.mem.Allocator.Error;
+} || std.mem.Allocator.Error || complex_list.Error;
 
 /// `FourierStatic` provides FFT operations without heap allocation.
 /// This is designed for cases where the FFT size is known at compile time.
@@ -61,7 +60,7 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
 
     return struct {
         pub const ComplexType = std.math.Complex(T);
-        pub const ComplexVector = std.MultiArrayList(ComplexType);
+        pub const ComplexList = complex_list.ComplexList(T);
 
         const window_size: usize = @intFromEnum(size);
         const levels: usize = std.math.log2(window_size);
@@ -84,23 +83,12 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `heap_allocator`: Allocator for the `ComplexVector`.
         ///     - `vec`: Input vector containing the audio signal.
         /// - **Returns**: Initialized `ComplexVector`. Throws an error if the input size is invalid.
-        pub fn createComplexVectorFrom(allocator: std.mem.Allocator, vec: []T) !ComplexVector {
-            if (vec.len != window_size) return Error.invalid_input_size;
-
-            var out = ComplexVector{};
-            try out.setCapacity(allocator, window_size);
-
-            for (vec) |item| try out.append(allocator, ComplexType.init(item, 0));
-
-            return out;
+        pub fn createComplexVectorFrom(allocator: std.mem.Allocator, vec: []T) !ComplexList {
+            return try ComplexList.initFrom(allocator, vec);
         }
 
-        pub fn createUninitializedComplexVector(allocator: std.mem.Allocator) !ComplexVector {
-            var out = ComplexVector{};
-            try out.setCapacity(allocator, window_size);
-            try out.resize(allocator, window_size);
-
-            return out;
+        pub fn createUninitializedComplexVector(allocator: std.mem.Allocator) !ComplexList {
+            return ComplexList.init(allocator, window_size);
         }
 
         /// Conveniently reuses an existing `ComplexVector` buffer for another FFT iteration by writing new input data to the vector.
@@ -109,14 +97,14 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `vec`: The `ComplexVector` to be reused.
         ///     - `input`: The new input signal to be written into the `ComplexVector`.
         /// - **Returns**: Updated `ComplexVector`. Throws an error if input size is invalid.
-        pub fn fillComplexVector(vec: *ComplexVector, input: []T) Error!ComplexVector {
-            if (vec.len != input.len or vec.len != window_size) return Error.invalid_input_size;
+        pub fn fillComplexVector(list: *ComplexList, input: []T) Error!ComplexList {
+            if (list.len != input.len or list.len != window_size) return Error.invalid_input_size;
 
             for (input, 0..input.len) |item, i| {
-                vec.set(i, ComplexType.init(item, 0));
+                try list.set(i, ComplexType.init(item, 0));
             }
 
-            return vec.*;
+            return list.*;
         }
 
         /// Fills the `ComplexVector` with input data and pads the remaining buffer with zeros.
@@ -129,20 +117,20 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `input`: The input signal to be written into the `ComplexVector`. Can be smaller than the buffer size.
         /// - **Returns**: The updated `ComplexVector`, padded with zeros for the remaining space.
         /// Throws an error if the input exceeds the buffer size.
-        pub fn fillComplexVectorWithPadding(vec: *ComplexVector, input: []T) Error!ComplexVector {
-            if (input.len > vec.len or input.len > window_size) return Error.invalid_input_size;
+        pub fn fillComplexVectorWithPadding(list: *ComplexList, input: []T) Error!ComplexList {
+            if (input.len > list.len or input.len > window_size) return Error.invalid_input_size;
 
-            if (input.len == vec.len) return fillComplexVector(vec, input);
+            if (input.len == list.len) return fillComplexVector(list, input);
 
             for (input, 0..input.len) |item, i| {
-                vec.set(i, ComplexType.init(item, 0));
+                try list.set(i, ComplexType.init(item, 0));
             }
 
-            for (input.len..vec.len) |i| {
-                vec.set(i, ComplexType.init(0, 0));
+            for (input.len..list.len) |i| {
+                try list.set(i, ComplexType.init(0, 0));
             }
 
-            return vec.*;
+            return list.*;
         }
 
         ///  Computes the FFT on the input vector in place.
@@ -151,7 +139,7 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         /// - **Parameters**:
         ///     - `inout`: Input/output vector, modified in place.
         /// - **Returns**: Transformed `ComplexVector`. Throws an error if input size is invalid.
-        pub fn fft(inout: *ComplexVector) Error!ComplexVector {
+        pub fn fft(inout: *ComplexList) Error!ComplexList {
             if (inout.len != window_size) return Error.invalid_input_size;
 
             return fftRadix2(inout, .forward);
@@ -163,14 +151,15 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         /// - **Parameters**:
         ///     - `inout`: Input/output vector, modified in place.
         /// - **Returns**: Transformed `ComplexVector`. Throws an error if input size is invalid.
-        pub fn ifft(inout: *ComplexVector) Error!ComplexVector {
+        pub fn ifft(inout: *ComplexList) Error!ComplexList {
             if (inout.len != window_size) return Error.invalid_input_size;
 
             var out = try fftRadix2(inout, .inverse);
 
             for (0..out.len) |i| {
                 const len = ComplexType.init(@as(T, @floatFromInt(out.len)), 0);
-                out.set(i, out.get(i).div(len));
+                const item = out.get(i) orelse return Error.invalid_input_size;
+                try out.set(i, item.div(len));
             }
 
             return out;
@@ -184,15 +173,16 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `scale`: The magnitude scale to use (linear or decibel).
         ///     - `out`: Output buffer to store magnitudes.
         /// - **Returns**: Filled output buffer. Throws an error if sizes do not match.
-        pub fn magnitude(vec: ComplexVector, scale: MagnitudeScale, out: []T) Error![]T {
-            if (vec.len != out.len) return Error.invalid_input_size;
+        pub fn magnitude(list: ComplexList, scale: MagnitudeScale, out: []T) Error![]T {
+            if (list.len != out.len) return Error.invalid_input_size;
 
             const u = utils.Utils(T);
 
-            for (0..vec.len) |i| {
+            for (0..list.len) |i| {
+                const item = list.get(i) orelse return Error.invalid_input_size;
                 switch (scale) {
-                    .linear => out[i] = vec.get(i).magnitude(),
-                    .decibel => out[i] = u.DecibelsFromMagnitude(vec.get(i).magnitude(), 0.5),
+                    .linear => out[i] = item.magnitude(),
+                    .decibel => out[i] = u.DecibelsFromMagnitude(item.magnitude(), 0.5),
                 }
             }
 
@@ -205,11 +195,11 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `vec`: The `ComplexVector` containing complex FFT data.
         ///     - `out`: Output buffer to store phase angles.
         /// - **Returns**: Filled output buffer. Throws an error if sizes do not match.
-        pub fn phase(vec: ComplexVector, out: []T) Error![]T {
-            if (vec.len != out.len) return Error.invalid_input_size;
+        pub fn phase(list: ComplexList, out: []T) Error![]T {
+            if (list.len != out.len) return Error.invalid_input_size;
 
-            for (0..vec.len) |i| {
-                const item = vec.get(i);
+            for (0..list.len) |i| {
+                const item = list.get(i) orelse return Error.invalid_input_size;
                 out[i] = std.math.atan2(item.im, item.re);
             }
 
@@ -222,38 +212,33 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         /// - **Parameters**:
         ///     - `avec`, `bvec`: Input vectors to be convolved.
         /// - **Returns**: Convolved `ComplexVector`. Throws an error if input sizes are invalid.
-        pub fn convolve(avec: *ComplexVector, bvec: *ComplexVector) !ComplexVector {
-            var avec_ffted = try fft(avec);
-            const bvec_ffted = try fft(bvec);
+        pub fn convolve(alist: *ComplexList, blist: *ComplexList) !ComplexList {
+            var alist_ffted = try fft(alist);
+            const blist_ffted = try fft(blist);
 
-            for (0..avec_ffted.len) |i| {
-                avec_ffted.set(i, avec_ffted.get(i).mul(bvec_ffted.get(i)));
+            for (0..alist_ffted.len) |i| {
+                const aitem = alist_ffted.get(i) orelse return Error.invalid_input_size;
+                const bitem = blist_ffted.get(i) orelse return Error.invalid_input_size;
+
+                try alist_ffted.set(i, aitem.mul(bitem));
             }
 
-            // iff normalizes the output
-            return try ifft(&avec_ffted);
+            // ifft normalizes the output
+            return try ifft(&alist_ffted);
         }
 
-        fn fftRadix2(inout: *ComplexVector, direction: Direction) Error!ComplexVector {
+        fn fftRadix2(inout: *ComplexList, direction: Direction) Error!ComplexList {
             const exp_table_len: usize = @divFloor(window_size, 2);
 
-            var exp_table = ComplexVector{};
-
-            exp_table.setCapacity(static_allocator, exp_table_len) catch |err| {
-                log.err("Error setting capacity for exp_table: {any}", .{err});
-                return err;
-            };
-            defer exp_table.deinit(static_allocator);
+            var exp_table = try ComplexList.init(static_allocator, exp_table_len);
+            defer exp_table.deinit();
 
             for (0..exp_table_len) |i| {
                 const pi: T = if (direction == .inverse) -2.0 * std.math.pi else 2.0 * std.math.pi;
                 const angle: T = pi * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(inout.len));
                 const exp = ComplexType.init(std.math.cos(angle), -std.math.sin(angle));
 
-                exp_table.append(static_allocator, exp) catch |err| {
-                    log.err("Error appending to exp_table: {any}", .{err});
-                    return err;
-                };
+                try exp_table.set(i, exp);
             }
 
             // bit-reversal permutation
@@ -262,9 +247,10 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
                 const rev_idx = reverseBits(idx, levels);
 
                 if (idx > rev_idx) {
-                    const tmp = inout.get(idx);
-                    inout.set(idx, inout.get(rev_idx));
-                    inout.set(rev_idx, tmp);
+                    const rev_item = inout.get(rev_idx) orelse return Error.invalid_input_size;
+                    const item = inout.get(idx) orelse return Error.invalid_input_size;
+                    try inout.set(idx, rev_item);
+                    try inout.set(rev_idx, item);
                 }
             }
 
@@ -283,11 +269,14 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
                     while (inner_idx < idx + half_size) : (inner_idx += 1) {
                         const out_idx = inner_idx + half_size;
 
-                        const tmp = inout.get(out_idx).mul(exp_table.get(table_idx));
-                        var temp2 = inout.get(inner_idx);
+                        const exp = exp_table.get(table_idx) orelse return Error.invalid_input_size;
+                        const out_index_item = inout.get(out_idx) orelse return Error.invalid_input_size;
 
-                        inout.set(out_idx, temp2.sub(tmp));
-                        inout.set(inner_idx, temp2.add(tmp));
+                        const tmp = out_index_item.mul(exp);
+                        var temp2 = inout.get(inner_idx) orelse return Error.invalid_input_size;
+
+                        try inout.set(out_idx, temp2.sub(tmp));
+                        try inout.set(inner_idx, temp2.add(tmp));
 
                         table_idx += table_step;
                     }
@@ -892,7 +881,7 @@ test "FourierStatic: fft multiple simple input" {
     // but the allocation can be done before the fft calculation
     // and it can be reused for multiple fft
     var complex_vec = try transform.createComplexVectorFrom(allocator, &input_signal[0]);
-    defer complex_vec.deinit(allocator);
+    defer complex_vec.deinit();
 
     // transform 3 times. we always modify the same complex vector
     for (0..input_signal.len) |i| {
@@ -901,7 +890,7 @@ test "FourierStatic: fft multiple simple input" {
 
         // run 3 times reset the complex vector
         for (0..complex_vec.len) |j| {
-            const item = complex_vec.get(j);
+            const item = complex_vec.get(j).?;
             try testing.expectApproxEqAbs(input_signal[i][j], item.re, 0.0001);
         }
 
@@ -909,6 +898,31 @@ test "FourierStatic: fft multiple simple input" {
         if (i + 1 < input_signal.len) {
             complex_vec = try transform.fillComplexVector(&complex_vec, &input_signal[i + 1]);
         }
+    }
+}
+
+test "FourierStitc: fft sine" {
+    const allocator = std.testing.allocator;
+
+    const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var buffer: [128]f32 = undefined;
+    const sine = sineGeneration.generate(&buffer);
+
+    const transforms = FourierStatic(f32, .wz_128);
+
+    var output = try transforms.ComplexList.initFrom(allocator, sine);
+    defer output.deinit();
+
+    output = try transforms.fft(&output);
+
+    try testing.expectEqual(output.len, test_data.expected_sine_dft.len);
+
+    for (0..output.len) |i| {
+        const re = output.get(i).?.re;
+        const im = output.get(i).?.im;
+
+        try testing.expectApproxEqAbs(test_data.expected_sine_dft[i].re, re, 0.001);
+        try testing.expectApproxEqAbs(test_data.expected_sine_dft[i].im, im, 0.001);
     }
 }
 
@@ -920,7 +934,7 @@ test "FourierStatic: magnitude calculation" {
 
     var input = [len]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75 };
     var complex_vector = try transform.createComplexVectorFrom(allocator, &input);
-    defer complex_vector.deinit(allocator);
+    defer complex_vector.deinit();
 
     complex_vector = try transform.fft(&complex_vector);
 
@@ -942,7 +956,7 @@ test "FourierStatic: phase calculation" {
 
     var input = [len]f32{ 1.0, 0.75, 0.5, 0.25, 0.0, -0.25, -0.5, -0.75 };
     var complex_vector = try transform.createComplexVectorFrom(allocator, &input);
-    defer complex_vector.deinit(allocator);
+    defer complex_vector.deinit();
 
     complex_vector = try transform.fft(&complex_vector);
 
@@ -965,17 +979,17 @@ test "FourierStatic: convolution" {
     const transform = FourierStatic(f32, .wz_8);
 
     var complex_a = try transform.createComplexVectorFrom(allocator, &input_a);
-    defer complex_a.deinit(allocator);
+    defer complex_a.deinit();
 
     var complex_b = try transform.createComplexVectorFrom(allocator, &input_b);
-    defer complex_b.deinit(allocator);
+    defer complex_b.deinit();
 
     var result = try transform.convolve(&complex_a, &complex_b);
 
     const expected = [8]f32{ 1.375, 0.12499999999999994, 0.375, -0.375, -0.625, 0.625, -1.125, 0.625 };
 
     for (0..result.len) |i| {
-        try testing.expectApproxEqAbs(expected[i], result.get(i).re, 0.0001);
+        try testing.expectApproxEqAbs(expected[i], result.get(i).?.re, 0.0001);
     }
 }
 
