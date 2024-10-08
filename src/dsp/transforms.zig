@@ -168,20 +168,8 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `scale`: The magnitude scale to use (linear or decibel).
         ///     - `out`: Output buffer to store magnitudes.
         /// - **Returns**: Filled output buffer. Throws an error if sizes do not match.
-        pub fn magnitude(list: ComplexList, scale: MagnitudeScale, out: []T) Error![]T {
-            if (list.len != out.len) return Error.invalid_input_size;
-
-            const u = utils.Utils(T);
-
-            for (0..list.len) |i| {
-                const item = list.get(i) orelse return Error.invalid_input_size;
-                switch (scale) {
-                    .linear => out[i] = item.magnitude(),
-                    .decibel => out[i] = u.DecibelsFromMagnitude(item.magnitude(), 0.5),
-                }
-            }
-
-            return out;
+        pub fn magnitude(list: ComplexList, scale: complex_list.MagnitudeScale, out: []T) Error![]T {
+            return list.magnitude(scale, out);
         }
 
         /// Computes the phase (angle) of each element in the `ComplexVector` and writes the result to the output buffer.
@@ -191,14 +179,7 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `out`: Output buffer to store phase angles.
         /// - **Returns**: Filled output buffer. Throws an error if sizes do not match.
         pub fn phase(list: ComplexList, out: []T) Error![]T {
-            if (list.len != out.len) return Error.invalid_input_size;
-
-            for (0..list.len) |i| {
-                const item = list.get(i) orelse return Error.invalid_input_size;
-                out[i] = std.math.atan2(item.im, item.re);
-            }
-
-            return out;
+            return list.phase(out);
         }
 
         /// Convolves two complex vectors using FFT and modifies the both inputs in place.

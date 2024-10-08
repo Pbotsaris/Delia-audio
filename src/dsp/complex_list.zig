@@ -1,13 +1,21 @@
 const std = @import("std");
+const utilities = @import("utils.zig");
 
 pub const Error = error{
     out_of_bounds,
+    invalid_output_length,
+};
+
+pub const MagnitudeScale = enum {
+    linear,
+    decibel,
 };
 
 pub fn ComplexList(comptime T: type) type {
     return struct {
         const Self = @This();
         const ComplexType = std.math.Complex(T);
+        const utils = utilities.Utils(T);
 
         data: []T,
         allocator: std.mem.Allocator,
@@ -60,6 +68,37 @@ pub fn ComplexList(comptime T: type) type {
                 self.data[i * 2] = re / len_as_float;
                 self.data[i * 2 + 1] = im / len_as_float;
             }
+        }
+
+        pub fn magnitude(self: Self, scale: MagnitudeScale, out: []T) ![]T {
+            if (out.len < self.len) return Error.invalid_output_length;
+
+            for (0..self.len) |i| {
+                const re = self.data[i * 2];
+                const im = self.data[i * 2 + 1];
+
+                const mag = @sqrt(re * re + im * im);
+
+                switch (scale) {
+                    .linear => out[i] = mag,
+                    .decibel => out[i] = utils.DecibelsFromMagnitude(mag, 0.5),
+                }
+            }
+
+            return out;
+        }
+
+        pub fn phase(self: Self, out: []T) ![]T {
+            if (out.len < self.len) return Error.invalid_output_length;
+
+            for (0..self.len) |i| {
+                const re = self.data[i * 2];
+                const im = self.data[i * 2 + 1];
+
+                out[i] = std.math.atan2(im, re);
+            }
+
+            return out;
         }
 
         pub fn get(self: Self, index: usize) ?ComplexType {
