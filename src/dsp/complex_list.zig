@@ -50,6 +50,18 @@ pub fn ComplexList(comptime T: type) type {
             self.data[index * 2 + 1] = value.im;
         }
 
+        pub fn normalize(self: *Self) void {
+            const len_as_float: T = @floatFromInt(self.len);
+
+            for (0..self.len) |i| {
+                const re = self.data[i * 2];
+                const im = self.data[i * 2 + 1];
+
+                self.data[i * 2] = re / len_as_float;
+                self.data[i * 2 + 1] = im / len_as_float;
+            }
+        }
+
         pub fn get(self: Self, index: usize) ?ComplexType {
             if (index * 2 >= self.data.len) {
                 return null;
@@ -150,3 +162,46 @@ test "ComplexList initFrom data slice" {
         try testing.expectEqual(0.0, value.im);
     }
 }
+
+test "ComplexList normalize" {
+    const allocator = std.testing.allocator;
+    const Complex = std.math.Complex;
+
+    // Initialize the list with 3 complex numbers
+    var list = try ComplexList(f64).init(allocator, 5);
+    defer list.deinit();
+
+    try list.set(0, Complex(f64){ .re = 1.0, .im = 2.0 });
+    try list.set(1, Complex(f64){ .re = 3.0, .im = 4.0 });
+    try list.set(2, Complex(f64){ .re = 5.0, .im = 0.0 });
+    try list.set(3, Complex(f64){ .re = 6.0, .im = 8.0 });
+    try list.set(4, Complex(f64){ .re = 0.0, .im = 9.0 });
+
+    list.normalize();
+
+    const expected = [_]Complex(f64){
+        .{ .re = 0.2, .im = 0.4 },
+        .{ .re = 0.6, .im = 0.8 },
+        .{ .re = 1.0, .im = 0.0 },
+        .{ .re = 1.2, .im = 1.6 },
+        .{ .re = 0.0, .im = 1.8 },
+    };
+
+    for (0..list.len) |i| {
+        const value = list.get(i) orelse unreachable;
+        try testing.expectApproxEqAbs(expected[i].re, value.re, 0.001);
+        try testing.expectApproxEqAbs(expected[i].im, value.im, 0.001);
+    }
+}
+
+//test "testing vectors " {
+//    const haystack = "Hello there!";
+//    const vec: @Vector(haystack.len, u8) = haystack.*;
+//    const needle: @Vector(haystack.len, u8) = @splat(@as(u8, '!'));
+//
+//    const result = vec == needle;
+//
+//
+//
+//    std.debug.print("result: {any}\n", .{result});
+//}

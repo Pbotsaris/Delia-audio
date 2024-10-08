@@ -155,12 +155,7 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
             if (inout.len != window_size) return Error.invalid_input_size;
 
             var out = try fftRadix2(inout, .inverse);
-
-            for (0..out.len) |i| {
-                const len = ComplexType.init(@as(T, @floatFromInt(out.len)), 0);
-                const item = out.get(i) orelse return Error.invalid_input_size;
-                try out.set(i, item.div(len));
-            }
+            out.normalize();
 
             return out;
         }
