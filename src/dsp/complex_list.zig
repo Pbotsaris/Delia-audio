@@ -11,6 +11,7 @@ pub fn ComplexList(comptime T: type) type {
 
         data: []T,
         allocator: std.mem.Allocator,
+        len: usize,
 
         pub fn bytesRequired(len: usize) usize {
             return len * 2 * @sizeOf(T);
@@ -21,6 +22,22 @@ pub fn ComplexList(comptime T: type) type {
                 // twice the length for both real and imaginary parts
                 .data = try allocator.alloc(T, len * 2),
                 .allocator = allocator,
+                .len = len,
+            };
+        }
+
+        pub fn initFrom(allocator: std.mem.Allocator, data: []T) !Self {
+            const complex_data = try allocator.alloc(T, data.len * 2);
+
+            for (data, 0..data.len) |value, index| {
+                complex_data[index * 2] = value;
+                complex_data[index * 2 + 1] = 0;
+            }
+
+            return .{
+                .data = complex_data,
+                .allocator = allocator,
+                .len = data.len,
             };
         }
 
@@ -118,4 +135,20 @@ test "ComplexList handles bad indexing and bad resize" {
     const value9 = try list.get(9);
     try testing.expectEqual(@as(f32, 100.0), value9.re);
     try testing.expectEqual(@as(f32, 101.0), value9.im);
+}
+
+test "ComplexList initFrom data slice" {
+    const allocator = std.testing.allocator;
+    const T = f64;
+
+    var a = [_]T{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
+
+    var list = try ComplexList(T).initFrom(allocator, &a);
+    defer list.deinit();
+
+    for (0..a.len) |i| {
+        const value = try list.get(i);
+        try testing.expectEqual(a[i], value.re);
+        try testing.expectEqual(0.0, value.im);
+    }
 }
