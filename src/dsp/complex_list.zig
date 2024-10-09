@@ -58,6 +58,15 @@ pub fn ComplexList(comptime T: type) type {
             self.data[index * 2 + 1] = value.im;
         }
 
+        pub fn setScalar(self: *Self, index: usize, value: T) !void {
+            if (index * 2 >= self.data.len) {
+                return Error.out_of_bounds;
+            }
+
+            self.data[index * 2] = value;
+            self.data[index * 2 + 1] = 0;
+        }
+
         pub fn normalize(self: *Self) void {
             const len_as_float: T = @floatFromInt(self.len);
 
@@ -88,6 +97,11 @@ pub fn ComplexList(comptime T: type) type {
             return out;
         }
 
+        pub fn magnitudeAlloc(self: Self, allocator: std.mem.Allocator, scale: MagnitudeScale) ![]T {
+            const out = try allocator.alloc(T, self.len);
+            return self.magnitude(scale, out);
+        }
+
         pub fn phase(self: Self, out: []T) ![]T {
             if (out.len < self.len) return Error.invalid_output_length;
 
@@ -99,6 +113,11 @@ pub fn ComplexList(comptime T: type) type {
             }
 
             return out;
+        }
+
+        pub fn phaseAlloc(self: Self, allocator: std.mem.Allocator) ![]T {
+            const out = try allocator.alloc(T, self.len);
+            return self.phase(out);
         }
 
         pub fn get(self: Self, index: usize) ?ComplexType {
@@ -232,15 +251,3 @@ test "ComplexList normalize" {
         try testing.expectApproxEqAbs(expected[i].im, value.im, 0.001);
     }
 }
-
-//test "testing vectors " {
-//    const haystack = "Hello there!";
-//    const vec: @Vector(haystack.len, u8) = haystack.*;
-//    const needle: @Vector(haystack.len, u8) = @splat(@as(u8, '!'));
-//
-//    const result = vec == needle;
-//
-//
-//
-//    std.debug.print("result: {any}\n", .{result});
-//}
