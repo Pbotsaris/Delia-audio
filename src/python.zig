@@ -195,10 +195,12 @@ fn fft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*]py.PyObject
         return handleError(pylist_result, "Failed to perform FFT.");
     };
 
-    defer vec.deinit(allocator);
+    defer vec.deinit();
 
     for (0..pylist_size) |i| {
-        const py_complex: [*c]py.PyObject = py.PyComplex_FromDoubles(vec.get(i).re, vec.get(i).im);
+        const item = vec.get(i) orelse return handleError(pylist_result, "Failed to access item in ComplexList.");
+
+        const py_complex: [*c]py.PyObject = py.PyComplex_FromDoubles(item.re, item.im);
 
         if (py_complex == null) {
             return handleError(pylist_result, "Failed to create complex object.");
@@ -233,7 +235,7 @@ fn ifft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
         return handleError(pylist_result, "Failed to allocate memory for complex vector.");
     };
 
-    defer vec.deinit(allocator);
+    defer vec.deinit();
 
     for (0..pylist_size) |i| {
         const item = py.PyList_GetItem(pylist, @as(py.Py_ssize_t, @intCast(i)));
@@ -243,7 +245,10 @@ fn ifft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
         }
 
         const complex = transform.ComplexType.init(py.PyComplex_RealAsDouble(item), py.PyComplex_ImagAsDouble(item));
-        vec.set(i, complex);
+
+        vec.set(i, complex) catch {
+            return handleError(pylist_result, "Failed to set item in ComplexList.");
+        };
     }
 
     vec = transform.ifft(allocator, &vec) catch {
@@ -251,7 +256,8 @@ fn ifft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
     };
 
     for (0..pylist_size) |i| {
-        const py_complex: [*c]py.PyObject = py.PyComplex_FromDoubles(vec.get(i).re, vec.get(i).im);
+        const item = vec.get(i) orelse return handleError(pylist_result, "Failed to access item in ComplexList.");
+        const py_complex: [*c]py.PyObject = py.PyComplex_FromDoubles(item.re, item.im);
 
         if (py_complex == null) {
             return handleError(pylist_result, "Failed to create complex object.");
@@ -314,12 +320,13 @@ fn fftConvolve(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py
         bbuffer[i] = py.PyFloat_AsDouble(bitem);
     }
 
-    const vec = transform.convolve(allocator, abuffer, bbuffer) catch {
+    const list = transform.convolve(allocator, abuffer, bbuffer) catch {
         return handleError(pylist_result, "Failed to perform Convolution.");
     };
 
     for (0..apylist_size) |i| {
-        const py_complex: [*c]py.PyObject = py.PyComplex_FromDoubles(vec.get(i).re, vec.get(i).im);
+        const item = list.get(i) orelse return handleError(pylist_result, "Failed to access item in ComplexList.");
+        const py_complex: [*c]py.PyObject = py.PyComplex_FromDoubles(item.re, item.im);
 
         if (py_complex == null) {
             return handleError(pylist_result, "Failed to create complex object.");

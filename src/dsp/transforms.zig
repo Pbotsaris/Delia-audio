@@ -37,7 +37,7 @@ pub const WindowSize = enum(usize) {
 const Error = error{
     invalid_input_size,
     overflow,
-} || std.mem.Allocator.Error || complex_list.Error;
+} || std.mem.Allocator.Error || complex_list.ComplexListError;
 
 /// `FourierStatic` provides FFT operations without heap allocation.
 /// This is designed for cases where the FFT size is known at compile time.

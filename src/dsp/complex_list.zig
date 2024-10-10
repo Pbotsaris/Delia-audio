@@ -1,7 +1,7 @@
 const std = @import("std");
 const utilities = @import("utils.zig");
 
-pub const Error = error{
+pub const ComplexListError = error{
     out_of_bounds,
     invalid_output_length,
 };
@@ -12,14 +12,20 @@ pub const MagnitudeScale = enum {
 };
 
 pub fn ComplexList(comptime T: type) type {
+    if (T != f32 and T != f64) {
+        @compileError("ComplexList only supports f32 and f64 types");
+    }
+
     return struct {
         const Self = @This();
-        const ComplexType = std.math.Complex(T);
         const utils = utilities.Utils(T);
+        pub const ComplexType = std.math.Complex(T);
+        pub const Error = ComplexListError;
 
         data: []T,
         allocator: std.mem.Allocator,
         len: usize,
+        unowned: bool = false,
 
         pub fn bytesRequired(len: usize) usize {
             return len * 2 * @sizeOf(T);
@@ -49,9 +55,18 @@ pub fn ComplexList(comptime T: type) type {
             };
         }
 
+        pub fn initUnowned(allocator: std.mem.Allocator, data: []T) Self {
+            return .{
+                .data = data,
+                .len = data.len,
+                .unowned = true,
+                .allocator = allocator,
+            };
+        }
+
         pub fn set(self: *Self, index: usize, value: ComplexType) !void {
             if (index * 2 >= self.data.len) {
-                return Error.out_of_bounds;
+                return ComplexListError.out_of_bounds;
             }
 
             self.data[index * 2] = value.re;
@@ -60,7 +75,7 @@ pub fn ComplexList(comptime T: type) type {
 
         pub fn setScalar(self: *Self, index: usize, value: T) !void {
             if (index * 2 >= self.data.len) {
-                return Error.out_of_bounds;
+                return ComplexListError.out_of_bounds;
             }
 
             self.data[index * 2] = value;
@@ -80,7 +95,7 @@ pub fn ComplexList(comptime T: type) type {
         }
 
         pub fn magnitude(self: Self, scale: MagnitudeScale, out: []T) ![]T {
-            if (out.len < self.len) return Error.invalid_output_length;
+            if (out.len < self.len) return ComplexListError.invalid_output_length;
 
             for (0..self.len) |i| {
                 const re = self.data[i * 2];
@@ -103,7 +118,7 @@ pub fn ComplexList(comptime T: type) type {
         }
 
         pub fn phase(self: Self, out: []T) ![]T {
-            if (out.len < self.len) return Error.invalid_output_length;
+            if (out.len < self.len) return ComplexListError.invalid_output_length;
 
             for (0..self.len) |i| {
                 const re = self.data[i * 2];
@@ -128,12 +143,16 @@ pub fn ComplexList(comptime T: type) type {
             return ComplexType{ .re = self.data[index * 2], .im = self.data[index * 2 + 1] };
         }
         pub fn resize(self: *Self, new_len: usize) !void {
+            if (self.unowned) return;
+
             if (new_len * 2 <= self.data.len) return;
 
             self.data = try self.allocator.realloc(self.data, new_len * 2);
         }
 
         pub fn deinit(self: *Self) void {
+            if (self.unowned) return;
+
             self.allocator.free(self.data);
         }
     };
@@ -194,7 +213,7 @@ test "ComplexList handles bad indexing and bad resize" {
     var list = try ComplexList(f32).init(allocator, 2);
     defer list.deinit();
 
-    try testing.expectError(Error.out_of_bounds, list.set(4, Complex(f32){ .re = 1.0, .im = 1.0 }));
+    try testing.expectError(ComplexListError.out_of_bounds, list.set(4, Complex(f32){ .re = 1.0, .im = 1.0 }));
     try testing.expectEqual(null, list.get(3));
 
     try list.resize(10);
