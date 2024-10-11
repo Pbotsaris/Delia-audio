@@ -9,6 +9,7 @@ from .pydelia_wrapper import (
     decibels_from_magnitude,
     blackman,
     hanning,
+    stft,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "decibels_from_magnitude",
     "blackman",
     "hanning",
+    "stft",
 ]

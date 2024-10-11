@@ -8,6 +8,7 @@ const MatrixError = error{
     out_of_bounds,
     invalid_matrix_dimensions,
     invalid_matrix_direction,
+    invalid_input_length,
     unsupported_type,
 };
 
@@ -66,19 +67,45 @@ pub fn ComplexMatrix(comptime T: type) type {
             return ComplexType.init(re, im);
         }
 
-        pub fn getDimensionView(self: Self, i: usize) !ComplexList {
+        pub fn setRowOrColumn(self: *Self, axis_index: usize, input: ComplexList) !void {
+            const len = if (self.direction == .row_major) self.cols else self.rows;
+
+            // the input must be at least the length of the matrix
+            // if the input is longer, we ignore the extra values
+            // this is useful to ignore the output of a fft that is longer than the matrix (e.g. the negative frequencies)
+            if (input.len < len) return MatrixError.invalid_input_length;
+            if (axis_index >= len) return MatrixError.out_of_bounds;
+
+            switch (self.direction) {
+                .row_major => {
+                    for (0..len) |i| {
+                        const complex = input.get(i) orelse return MatrixError.invalid_input_length;
+                        try self.set(axis_index, i, complex);
+                    }
+                },
+
+                .column_major => {
+                    for (0..len) |i| {
+                        const complex = input.get(i) orelse return MatrixError.invalid_input_length;
+                        try self.set(i, axis_index, complex);
+                    }
+                },
+            }
+        }
+
+        pub fn getRowOrColumnView(self: Self, axis_index: usize) !ComplexList {
             const data = switch (self.direction) {
                 .row_major => row: {
-                    if (i >= self.rows) return MatrixError.out_of_bounds;
-                    break :row self.data[i * self.cols * 2 .. (i + 1) * self.cols * 2];
+                    if (axis_index >= self.rows) return MatrixError.out_of_bounds;
+                    break :row self.data[axis_index * self.cols * 2 .. (axis_index + 1) * self.cols * 2];
                 },
                 .column_major => col: {
-                    if (i >= self.cols) return MatrixError.out_of_bounds;
-                    break :col self.data[i * self.rows * 2 .. (i + 1) * self.rows * 2];
+                    if (axis_index >= self.cols) return MatrixError.out_of_bounds;
+                    break :col self.data[axis_index * self.rows * 2 .. (axis_index + 1) * self.rows * 2];
                 },
             };
 
-            return ComplexList.initUnowned(self.allocator, data);
+            return try ComplexList.initUnowned(self.allocator, data);
         }
 
         pub fn set(self: *Self, row: usize, col: usize, value: ComplexType) !void {
@@ -367,13 +394,11 @@ test "ComplexMatrix initializes to zero" {
 test "ComplexMatrix set and get row or column based on direction" {
     const allocator = std.testing.allocator;
 
-    // Initialize a 3x3 matrix
     var mat_row = try ComplexMatrix(f32).init(allocator, .{ .rows = 3, .cols = 3, .direction = .row_major });
     defer mat_row.deinit();
 
     try mat_row.zeros();
 
-    // Set row-major direction and test row
     const row_values = [_]f32{ 1.0, 2.0, 3.0 };
     const complex_values: [3]std.math.Complex(f32) = .{
         std.math.Complex(f32).init(row_values[0], 0.0),
@@ -385,13 +410,11 @@ test "ComplexMatrix set and get row or column based on direction" {
         try mat_row.set(1, col, complex_values[col]);
     }
 
-    const result_row = try mat_row.getDimensionView(1);
+    const result_row = try mat_row.getRowOrColumnView(1);
 
     for (0..3) |col| {
         try std.testing.expectEqualDeep(result_row.get(col).?, complex_values[col]);
     }
-
-    // Set column-major direction and test column
 
     var mat_col = try ComplexMatrix(f32).init(allocator, .{ .rows = 3, .cols = 3, .direction = .column_major });
     defer mat_col.deinit();
@@ -403,13 +426,61 @@ test "ComplexMatrix set and get row or column based on direction" {
         std.math.Complex(f32).init(col_values[2], 0.0),
     };
 
-    for (0..3) |col| {
+    for (0..complex_col_values.len) |col| {
         try mat_col.set(col, 2, complex_col_values[col]);
     }
 
-    const result_col = try mat_col.getDimensionView(2);
-    for (0..3) |row| {
+    // the matrix ows the list, so we don't have or can deinit it
+    const result_col = try mat_col.getRowOrColumnView(2);
+
+    for (0..result_col.len) |row| {
         try std.testing.expectEqualDeep(result_col.get(row).?, complex_col_values[row]);
+    }
+}
+
+test "ComplexMatrix set row or column using setRowOrColumn" {
+    const allocator = std.testing.allocator;
+
+    var mat_row = try ComplexMatrix(f32).init(allocator, .{ .rows = 3, .cols = 3, .direction = .row_major });
+    defer mat_row.deinit();
+
+    try mat_row.zeros();
+
+    var row_values = [_]f32{ 1.0, 2.0, 3.0 };
+
+    // we have to de init the list, it will be copied to the matrix
+    var row_complex_list = try complex_list.ComplexList(f32).initFrom(allocator, &row_values);
+    defer row_complex_list.deinit();
+
+    try mat_row.setRowOrColumn(1, row_complex_list);
+
+    const result_row = try mat_row.getRowOrColumnView(1);
+
+    for (0..result_row.len) |col| {
+        const expected = result_row.get(col).?;
+        const actual = row_complex_list.get(col).?;
+        try std.testing.expectEqualDeep(expected, actual);
+    }
+
+    var mat_col = try ComplexMatrix(f32).init(allocator, .{ .rows = 3, .cols = 3, .direction = .column_major });
+    defer mat_col.deinit();
+
+    try mat_col.zeros();
+
+    var col_values = [_]f32{ 4.0, 5.0, 6.0 };
+
+    // we have to de init the list, it will be copied to the matrix
+    var col_complex_list = try complex_list.ComplexList(f32).initFrom(allocator, &col_values);
+    defer col_complex_list.deinit();
+
+    try mat_col.setRowOrColumn(2, col_complex_list);
+
+    const result_col = try mat_col.getRowOrColumnView(2);
+
+    for (0..result_col.len) |row| {
+        const expected = result_col.get(row).?;
+        const actual = col_complex_list.get(row).?;
+        try std.testing.expectEqualDeep(expected, actual);
     }
 }
 
@@ -419,5 +490,5 @@ test "ComplexMatrix out-of-bounds access for row or column" {
     var mat = try ComplexMatrix(f32).init(allocator, .{ .rows = 3, .cols = 3, .direction = .row_major });
     defer mat.deinit();
 
-    try std.testing.expectError(MatrixError.out_of_bounds, mat.getDimensionView(3));
+    try std.testing.expectError(MatrixError.out_of_bounds, mat.getRowOrColumnView(3));
 }

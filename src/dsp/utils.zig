@@ -1,4 +1,6 @@
 const std = @import("std");
+const waves = @import("waves.zig");
+const test_data = @import("test_data.zig");
 
 pub fn Utils(comptime T: type) type {
     if (T != f32 and T != f64) {
@@ -78,3 +80,37 @@ pub fn Utils(comptime T: type) type {
 }
 
 const testing = std.testing;
+
+test "DSP Utils hanning window function" {
+    const utils = Utils(f32);
+
+    var input: [128]f32 = undefined;
+    const sine = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+
+    const sine_input = sine.generate(&input);
+
+    for (0..sine_input.len) |i| {
+        sine_input[i] *= utils.hanning(i, input.len);
+    }
+
+    for (sine_input, 0..sine_input.len) |sample, i| {
+        try testing.expectApproxEqAbs(test_data.hanning_expect[i], sample, 0.000001);
+    }
+}
+
+test "DSP Utils blackman window function" {
+    const utils = Utils(f32);
+
+    var input: [128]f32 = undefined;
+    const sine = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+
+    const sine_input = sine.generate(&input);
+
+    for (0..sine_input.len) |i| {
+        sine_input[i] *= utils.blackman(i, input.len);
+    }
+
+    for (sine_input, 0..sine_input.len) |sample, i| {
+        try testing.expectApproxEqAbs(test_data.blackman_expect[i], sample, 0.000001);
+    }
+}

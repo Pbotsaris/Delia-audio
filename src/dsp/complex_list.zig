@@ -4,6 +4,7 @@ const utilities = @import("utils.zig");
 pub const ComplexListError = error{
     out_of_bounds,
     invalid_output_length,
+    invalid_input_length,
 };
 
 pub const MagnitudeScale = enum {
@@ -55,10 +56,12 @@ pub fn ComplexList(comptime T: type) type {
             };
         }
 
-        pub fn initUnowned(allocator: std.mem.Allocator, data: []T) Self {
+        pub fn initUnowned(allocator: std.mem.Allocator, data: []T) !Self {
+            if (data.len % 2 != 0) return ComplexListError.invalid_input_length;
+
             return .{
                 .data = data,
-                .len = data.len,
+                .len = @divFloor(data.len, 2), // 2 values per complex number
                 .unowned = true,
                 .allocator = allocator,
             };
