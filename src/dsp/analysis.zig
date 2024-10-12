@@ -19,6 +19,7 @@ pub const Error = error{
 };
 
 pub const HopSize = enum(usize) {
+    sixteenth_window = 16,
     eighth_window = 8,
     quarter_window = 4,
     half_window = 2,
@@ -28,6 +29,21 @@ pub const HopSize = enum(usize) {
 
     pub fn toInt(self: Self) usize {
         return if (self == .three_quarter_window) 4 else @intFromEnum(self);
+    }
+
+    pub fn fromSize(hop_size: usize, window_size: usize) Self {
+        const fraction: f32 = @as(f32, @floatFromInt(hop_size)) / @as(f32, @floatFromInt(window_size));
+
+        return Self.fromFloat(fraction);
+    }
+
+    pub fn fromFloat(float: f32) Self {
+        if (float <= 0.0625) return .sixteenth_window;
+        if (float <= 0.125) return .eighth_window;
+        if (float <= 0.25) return .quarter_window;
+        if (float <= 0.5) return .half_window;
+
+        return .three_quarter_window;
     }
 
     pub fn calcSize(self: Self, win_size: usize) usize {
@@ -84,8 +100,8 @@ pub fn ShortTimeFourierStatic(comptime T: type, comptime window_size: transforms
             // Rows are the number of windows / time slices
             // Columns are the number of frequencies & complex numbers
             var output = try Matrix.init(allocator, .{
-                .rows = n_windows,
-                .cols = @divFloor(win_size, 2) + 1,
+                .rows = @divFloor(win_size, 2) + 1,
+                .cols = n_windows,
                 .direction = .column_major,
             });
 
@@ -150,7 +166,7 @@ pub fn ShortTimeFourierStatic(comptime T: type, comptime window_size: transforms
     };
 }
 
-fn ShortTimeFourierDynamic(comptime T: type) type {
+pub fn ShortTimeFourierDynamic(comptime T: type) type {
     return struct {
         const Self = @This();
         const transform = transforms.FourierDynamic(T);
@@ -219,7 +235,7 @@ fn ShortTimeFourierDynamic(comptime T: type) type {
             };
         }
 
-        pub fn stftAlloc(self: Self, input: []T) !Matrix {
+        pub fn stft(self: Self, allocator: std.mem.Allocator, input: []T) !Matrix {
             if (input.len < self.window_size) {
                 log.err("Input size {d} is less than window size {d}\n", .{ input.len, self.window_size });
                 return Error.invalid_input_size;
@@ -227,9 +243,9 @@ fn ShortTimeFourierDynamic(comptime T: type) type {
 
             const n_windows: usize = @divFloor((input.len - self.window_size), self.hop_size) + 1;
 
-            const output = try Matrix.init(self.allocator, .{
-                .rows = n_windows,
-                .cols = @divFloor(self.window_size, 2) + 1,
+            var output = try Matrix.init(allocator, .{
+                .rows = @divFloor(self.window_size, 2) + 1,
+                .cols = n_windows,
                 .direction = .column_major,
             });
 
@@ -247,8 +263,6 @@ fn ShortTimeFourierDynamic(comptime T: type) type {
                 var inout = try transform.fft(self.allocator, segment);
                 defer inout.deinit();
 
-                // the matrix is sized to the Nyquist limit
-                // so the negative frequencies in inout are discarded
                 try output.setRowOrColumn(win_index, inout);
             }
 
@@ -299,30 +313,22 @@ test "ShortTimeFourierStatic: STFT" {
     });
 
     try std.testing.expectEqual(stft.hop_size, 16);
-
-    var input: [128]f32 = undefined;
-    const sine = waves.Sine(f32).init(400.0, 1.0, 44100.0);
-
-    const sine_input = sine.generate(&input);
-
-    var mat = try stft.stft(allocator, sine_input);
+    var mat = try stft.stft(allocator, &test_data.stft_sine_intput);
     defer mat.deinit();
 
-    try std.testing.expectEqual(mat.rows, test_data.stft_expected[0].len);
-    try std.testing.expectEqual(mat.cols, test_data.stft_expected.len);
+    try std.testing.expectEqual(mat.rows, test_data.stft_expected.len);
+    try std.testing.expectEqual(mat.cols, test_data.stft_expected[0].len);
 
     for (0..mat.rows) |row| {
         for (0..mat.cols) |col| {
-            const expected = test_data.stft_expected[col][row];
+            const expected = test_data.stft_expected[row][col];
             const actual = mat.get(row, col).?;
 
-            _ = expected;
-            _ = actual;
-
-            //   std.debug.print("Expected ({d}x{d}): re: {d:.4}, im: {d:.4}\n", .{ row, col, expected.re, expected.im });
-            //  std.debug.print("Actual   ({d}x{d}): re: {d:.4}, im: {d:.4}\n", .{ row, col, actual.re, actual.im });
-            //  try std.testing.expectApproxEqAbs(expected.re, actual.re, 0.1);
-            //  try std.testing.expectApproxEqAbs(expected.im, actual.im, 0.1);
+            //        std.debug.print("Actual   ({d}x{d}): re: {d:.4}, im: {d:.4}\n", .{ row, col, actual.re, actual.im });
+            //      std.debug.print("Expected ({d}x{d}): re: {d:.4}, im: {d:.4}\n", .{ row, col, expected.re, expected.im });
+            //          std.debug.print("-\n", .{});
+            try std.testing.expectApproxEqAbs(expected.im, actual.im, 1);
+            try std.testing.expectApproxEqAbs(expected.re, actual.re, 1);
         }
     }
 }
@@ -356,4 +362,35 @@ test "ShortTimeFourierDynamic: Initialization" {
     try std.testing.expectEqual(stft.window_size, 64);
     try std.testing.expectEqual(stft.normalize, false);
     try std.testing.expectEqual(stft.window, .hann);
+}
+
+test "ShorttimeFourierDynamic: Run" {
+    const allocator = std.testing.allocator;
+
+    var input: [128]f32 = undefined;
+    const sine = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+
+    const sine_input = sine.generate(&input);
+
+    const stft = try ShortTimeFourierDynamic(f32).init(allocator, .{
+        .window_size = .wz_64,
+        .hop_size = .quarter_window,
+        .window_function = .hann,
+        .normalize = false,
+    });
+
+    defer stft.deinit();
+
+    var mat = try stft.stft(allocator, sine_input);
+
+    defer mat.deinit();
+
+    for (0..mat.cols) |col| {
+        for (0..mat.rows) |row| {
+            const actual = mat.get(row, col).?;
+            _ = actual;
+            //       std.debug.print("Actual ({d}x{d}): re: {d:.4}, im: {d:.4}\n", .{ row, col, actual.re, actual.im });
+            //_ = actual;
+        }
+    }
 }

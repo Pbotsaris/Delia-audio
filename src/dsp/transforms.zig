@@ -30,8 +30,25 @@ pub const WindowSize = enum(usize) {
     wz_2048 = 2048,
     wz_4096 = 4096,
     wz_8192 = 8192,
-    wz_16384 = 16384,
-    wz_32768 = 32768,
+
+    pub fn fromInt(int: usize) ?WindowSize {
+        switch (int) {
+            2 => return .wz_2,
+            4 => return .wz_4,
+            8 => return .wz_8,
+            16 => return .wz_16,
+            32 => return .wz_32,
+            64 => return .wz_64,
+            128 => return .wz_128,
+            256 => return .wz_256,
+            512 => return .wz_512,
+            1024 => return .wz_1024,
+            2048 => return .wz_2048,
+            4096 => return .wz_4096,
+            8192 => return .wz_8192,
+            else => return null,
+        }
+    }
 };
 
 const Error = error{

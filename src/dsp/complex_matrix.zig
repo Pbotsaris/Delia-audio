@@ -1,6 +1,7 @@
 const std = @import("std");
 const utilities = @import("utils.zig");
 const complex_list = @import("complex_list.zig");
+const waves = @import("waves.zig");
 
 const log = std.log.scoped(.dsp);
 
@@ -476,11 +477,32 @@ test "ComplexMatrix set row or column using setRowOrColumn" {
     try mat_col.setRowOrColumn(2, col_complex_list);
 
     const result_col = try mat_col.getRowOrColumnView(2);
-
     for (0..result_col.len) |row| {
         const expected = result_col.get(row).?;
         const actual = col_complex_list.get(row).?;
         try std.testing.expectEqualDeep(expected, actual);
+    }
+}
+
+test "ComplexMatrix set row or column using setRowOrColumn with multiple values" {
+    const allocator = std.testing.allocator;
+
+    var input: [126]f32 = undefined;
+    const sine = waves.Sine(f32).init(400.0, 0.8, 44100).generate(&input);
+
+    var mat = try ComplexMatrix(f32).init(allocator, .{ .rows = sine.len, .cols = 3, .direction = .column_major });
+
+    defer mat.deinit();
+    try mat.zeros();
+
+    var col_list = try complex_list.ComplexList(f32).initFrom(allocator, sine);
+    defer col_list.deinit();
+
+    try mat.setRowOrColumn(1, col_list);
+
+    for (0..mat.rows) |row_index| {
+        const actual = mat.get(row_index, 1) orelse unreachable;
+        try std.testing.expectEqual(actual.re, sine[row_index]);
     }
 }
 

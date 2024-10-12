@@ -210,8 +210,7 @@ fn fft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*]py.PyObject
 fn ifft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObject {
     _ = self;
 
-    const pylist: [*c]py.PyObject = parseArgument(args, "O") //
-    orelse return @as([*c]py.PyObject, (@ptrFromInt(zero)));
+    const pylist: [*c]py.PyObject = parseArgument(args, "O") orelse return @as([*c]py.PyObject, (@ptrFromInt(zero)));
 
     const pylist_size: usize = @intCast(py.PyList_Size(pylist));
     const pylist_result: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(pylist_size)));
@@ -267,7 +266,13 @@ fn ifft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
 fn stft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObject {
     _ = self;
 
-    const pylist = parseArgument(args, "O") orelse return @as([*c]py.PyObject, (@ptrFromInt(zero)));
+    var pylist: [*c]py.PyObject = null;
+    var window_size: usize = 0;
+    var hop_size: usize = 0;
+
+    if (py.PyArg_ParseTuple(args, "Okk", &pylist, &window_size, &hop_size) == 0) {
+        return handleError(null, "Failed to parse arguments");
+    }
 
     if (py.PyList_Check(pylist) == 0) {
         return handleError(null, "Argument must be a list.");
@@ -275,11 +280,45 @@ fn stft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
 
     const pylist_size: usize = @intCast(py.PyList_Size(pylist));
 
+    if (pylist_size == 0) {
+        return handleError(null, "List must not be empty.");
+    }
+
+    if (window_size == 0 or hop_size == 0) {
+        log.err("window_size: {d}, hop_size: {d}", .{ window_size, hop_size });
+        return handleError(null, "Window and hop sizes must be greater than 0.");
+    }
+
+    if (window_size <= hop_size) {
+        log.err("window_size: {d}, hop_size: {d}", .{ window_size, hop_size });
+        return handleError(null, "Window size must be greater than hop size.");
+    }
+
+    if (window_size >= pylist_size) {
+        log.err("window_size: {d}, list: {d}", .{ window_size, pylist_size });
+        return handleError(null, "Window size must be less than the size of the input list.");
+    }
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() == .leak) log.err("Memory leak detected", .{});
 
     const allocator = gpa.allocator();
-    const short_time = dsp.analysis.ShortTimeFourierTransform(T, .wz_1024).init(.{});
+
+    const win_size = dsp.transforms.WindowSize.fromInt(window_size) orelse {
+        return handleError(null, "Invalid window size. It must be a power of 2 between 16 and 8192.");
+    };
+
+    const short_time = dsp.analysis.ShortTimeFourierDynamic(T).init(allocator, .{
+        .window_size = win_size,
+        .hop_size = dsp.analysis.HopSize.fromSize(hop_size, window_size),
+        .normalize = false,
+        .window_function = .hann,
+    }) catch |err| {
+        log.err("STFT Error: {any}", .{err});
+        return handleError(null, "Failed to initialize STFT Object.");
+    };
+
+    defer short_time.deinit();
 
     const signal = allocator.alloc(T, pylist_size) catch |err| {
         log.err("Allocation Error: {any}", .{err});
@@ -305,20 +344,20 @@ fn stft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
 
     defer mat.deinit();
 
-    const pylist_result: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(mat.rows)));
+    const pylist_result: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(mat.cols)));
 
     if (pylist_result == null) {
         return handleError(pylist_result, "Failed to create result list.");
     }
 
-    for (0..mat.rows) |row| {
-        const inner_list: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(mat.cols)));
+    for (0..mat.cols) |col| {
+        const inner_list: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(mat.rows)));
 
-        for (0..mat.cols) |col| {
-            if (inner_list == null) {
-                return handleError(pylist_result, "Failed to create inner list.");
-            }
+        if (inner_list == null) {
+            return handleError(pylist_result, "Failed to create inner list.");
+        }
 
+        for (0..mat.rows) |row| {
             const mat_item = mat.get(row, col) orelse return handleError(pylist_result, "Failed to access item in ComplexMatrix.");
             const py_item = py.PyComplex_FromDoubles(mat_item.re, mat_item.im);
 
@@ -329,7 +368,7 @@ fn stft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
             _ = py.PyList_SetItem(inner_list, @as(py.Py_ssize_t, @intCast(row)), py_item);
         }
 
-        _ = py.PyList_SetItem(pylist_result, @as(py.Py_ssize_t, @intCast(row)), inner_list);
+        _ = py.PyList_SetItem(pylist_result, @as(py.Py_ssize_t, @intCast(col)), inner_list);
     }
 
     return pylist_result;
@@ -584,7 +623,7 @@ var methods = [_]py.PyMethodDef{
         .ml_name = "stft",
         .ml_meth = stft,
         .ml_flags = py.METH_VARARGS,
-        .ml_doc = "stft(data: List[float]) -> List[List[complex]]\n--\n\nPerform a Short Time Fourier Transform on the input data.",
+        .ml_doc = "stft(data: List[float], window_size: int, hop_size: int) -> List[List[complex]]\n--\n\nPerform a Short Time Fourier Transform on the input data.",
     },
 };
 

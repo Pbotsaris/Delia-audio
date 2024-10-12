@@ -50,5 +50,5 @@ def blackman(vec: List[float]) -> List[float]:
 def hanning(vec: List[float]) -> List[float]:
     return _pydelia.hanning(vec)
 
-def stft(vec: List[float]) -> List[List[float]]:
-    return _pydelia.stft(vec)
+def stft(vec: List[float], win_size: int, hop_size: int) -> List[List[float]]:
+    return _pydelia.stft(vec, win_size, hop_size)
