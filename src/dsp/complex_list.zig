@@ -1,6 +1,8 @@
 const std = @import("std");
 const utilities = @import("utils.zig");
 
+const log = @import("log.zig").log;
+
 pub const ComplexListError = error{
     out_of_bounds,
     invalid_output_length,
@@ -57,7 +59,10 @@ pub fn ComplexList(comptime T: type) type {
         }
 
         pub fn initUnowned(allocator: std.mem.Allocator, data: []T) !Self {
-            if (data.len % 2 != 0) return ComplexListError.invalid_input_length;
+            if (data.len % 2 != 0) {
+                log.err("ComplexList.initUnowned input data length {d} must be a multiple of 2", .{data.len});
+                return ComplexListError.invalid_input_length;
+            }
 
             return .{
                 .data = data,
@@ -69,6 +74,7 @@ pub fn ComplexList(comptime T: type) type {
 
         pub fn set(self: *Self, index: usize, value: ComplexType) !void {
             if (index * 2 >= self.data.len) {
+                log.err("ComplexList.set index {d} out of bounds", .{index});
                 return ComplexListError.out_of_bounds;
             }
 
@@ -78,6 +84,7 @@ pub fn ComplexList(comptime T: type) type {
 
         pub fn setScalar(self: *Self, index: usize, value: T) !void {
             if (index * 2 >= self.data.len) {
+                log.err("ComplexList.setScalar index {d} out of bounds", .{index});
                 return ComplexListError.out_of_bounds;
             }
 
@@ -98,7 +105,10 @@ pub fn ComplexList(comptime T: type) type {
         }
 
         pub fn magnitude(self: Self, scale: MagnitudeScale, out: []T) ![]T {
-            if (out.len < self.len) return ComplexListError.invalid_output_length;
+            if (out.len < self.len) {
+                log.err("ComplexList.magnitude output length {d} is less than input length {d}", .{ out.len, self.len });
+                return ComplexListError.invalid_output_length;
+            }
 
             for (0..self.len) |i| {
                 const re = self.data[i * 2];
@@ -121,7 +131,10 @@ pub fn ComplexList(comptime T: type) type {
         }
 
         pub fn phase(self: Self, out: []T) ![]T {
-            if (out.len < self.len) return ComplexListError.invalid_output_length;
+            if (out.len < self.len) {
+                log.err("ComplexList.phase output length {d} is less than input length {d}", .{ out.len, self.len });
+                return ComplexListError.invalid_output_length;
+            }
 
             for (0..self.len) |i| {
                 const re = self.data[i * 2];

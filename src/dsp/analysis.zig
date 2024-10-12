@@ -6,7 +6,7 @@ const utils = @import("utils.zig");
 const waves = @import("waves.zig");
 const test_data = @import("test_data.zig");
 
-const log = std.log.scoped(.stft);
+const log = @import("log.zig").log;
 
 pub const Windowfunction = enum {
     hann,
@@ -77,7 +77,7 @@ pub fn ShortTimeFourierStatic(comptime T: type, comptime window_size: transforms
 
         pub fn init(opts: Options) !Self {
             if (opts.hop_size.toInt() > win_size) {
-                log.err("Hop size {d} is greater than window size {d}\n", .{ opts.hop_size.toInt(), win_size });
+                log.err("ShortTimeFourierStatic.init:  Hop size {d} is greater than window size {d}", .{ opts.hop_size.toInt(), win_size });
                 return Error.invalid_hop_size;
             }
 
@@ -92,7 +92,7 @@ pub fn ShortTimeFourierStatic(comptime T: type, comptime window_size: transforms
         // most make a note that the input is modified by this function, there are no copies
         pub fn stft(self: Self, allocator: std.mem.Allocator, input: []T) !Matrix {
             if (input.len < win_size) {
-                log.err("Input size {d} is less than window size {d}\n", .{ input.len, win_size });
+                log.err("ShortTimeFourierStatic.stft: Input size {d} is less than window size {d}", .{ input.len, win_size });
                 return Error.invalid_input_size;
             }
 
@@ -223,7 +223,7 @@ pub fn ShortTimeFourierDynamic(comptime T: type) type {
 
         pub fn init(allocator: std.mem.Allocator, opts: Options) !Self {
             if (opts.hop_size.toInt() > @intFromEnum(opts.window_size)) {
-                log.err("Hop size {d} is greater than window size {d}\n", .{ opts.hop_size.toInt(), @intFromEnum(opts.window_size) });
+                log.err("ShortTimeFourierDynamic.init Hop size {d} is greater than window size {d}", .{ opts.hop_size.toInt(), @intFromEnum(opts.window_size) });
                 return Error.invalid_hop_size;
             }
             return .{
@@ -238,7 +238,7 @@ pub fn ShortTimeFourierDynamic(comptime T: type) type {
 
         pub fn stft(self: Self, allocator: std.mem.Allocator, input: []T) !Matrix {
             if (input.len < self.window_size) {
-                log.err("Input size {d} is less than window size {d}\n", .{ input.len, self.window_size });
+                log.err("ShortTimeFourierDynamic.stft: Input size {d} is less than window size {d}", .{ input.len, self.window_size });
                 return Error.invalid_input_size;
             }
 

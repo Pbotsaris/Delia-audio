@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("log.zig").log;
 
 pub fn Sine(comptime T: type) type {
     if (T != f32 and T != f64) {

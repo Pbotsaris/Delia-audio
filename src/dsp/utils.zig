@@ -2,6 +2,8 @@ const std = @import("std");
 const waves = @import("waves.zig");
 const test_data = @import("test_data.zig");
 
+const log = @import("log.zig").log;
+
 pub fn Utils(comptime T: type) type {
     if (T != f32 and T != f64) {
         @compileError("Only f32 and f64 are supported");

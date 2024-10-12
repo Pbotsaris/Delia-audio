@@ -4,17 +4,12 @@ const utils = @import("utils.zig");
 const test_data = @import("test_data.zig");
 const complex_list = @import("complex_list.zig");
 
+const log = @import("log.zig").log;
+
 const Direction = enum {
     forward,
     inverse,
 };
-
-pub const std_options = .{
-    .log_level = .err,
-    .logFn = @import("../logging.zig").logFn,
-};
-
-const log = std.log.scoped(.transforms);
 
 pub const WindowSize = enum(usize) {
     wz_2 = 2,
@@ -110,7 +105,13 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `input`: The new input signal to be written into the `ComplexVector`.
         /// - **Returns**: Updated `ComplexVector`. Throws an error if input size is invalid.
         pub fn fillComplexVector(list: *ComplexList, input: []T) Error!ComplexList {
-            if (list.len != input.len or list.len != window_size) return Error.invalid_input_size;
+            if (list.len != input.len or list.len != window_size) {
+                log.err(
+                    "FourierStatic.fillComplexVector: Invalid input size: list.len: {d}, input.len: {d}, window_size: {d}",
+                    .{ list.len, input.len, window_size },
+                );
+                return Error.invalid_input_size;
+            }
 
             for (input, 0..input.len) |item, i| {
                 try list.set(i, ComplexType.init(item, 0));
@@ -130,7 +131,13 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         /// - **Returns**: The updated `ComplexVector`, padded with zeros for the remaining space.
         /// Throws an error if the input exceeds the buffer size.
         pub fn fillComplexVectorWithPadding(list: *ComplexList, input: []T) Error!ComplexList {
-            if (input.len > list.len or input.len > window_size) return Error.invalid_input_size;
+            if (input.len > list.len or input.len > window_size) {
+                log.err(
+                    "FourierStatic.fillComplexVectorWithPadding: Invalid input size: list.len: {d}, input.len: {d}, window_size: {d}",
+                    .{ list.len, input.len, window_size },
+                );
+                return Error.invalid_input_size;
+            }
 
             if (input.len == list.len) return fillComplexVector(list, input);
 
@@ -152,7 +159,14 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `inout`: Input/output vector, modified in place.
         /// - **Returns**: Transformed `ComplexVector`. Throws an error if input size is invalid.
         pub fn fft(inout: *ComplexList) Error!ComplexList {
-            if (inout.len != window_size) return Error.invalid_input_size;
+            if (inout.len != window_size) {
+                log.err(
+                    "FourierStatic.fft: Invalid input size: inout.len: {d}, window_size: {d}",
+                    .{ inout.len, window_size },
+                );
+
+                return Error.invalid_input_size;
+            }
 
             return fftRadix2(inout, .forward);
         }
@@ -164,7 +178,13 @@ pub fn FourierStatic(comptime T: type, comptime size: WindowSize) type {
         ///     - `inout`: Input/output vector, modified in place.
         /// - **Returns**: Transformed `ComplexVector`. Throws an error if input size is invalid.
         pub fn ifft(inout: *ComplexList) Error!ComplexList {
-            if (inout.len != window_size) return Error.invalid_input_size;
+            if (inout.len != window_size) {
+                log.err(
+                    "FourierStatic.ifft: Invalid input size: inout.len: {d}, window_size: {d}",
+                    .{ inout.len, window_size },
+                );
+                return Error.invalid_input_size;
+            }
 
             var out = try fftRadix2(inout, .inverse);
             out.normalize();
@@ -576,7 +596,7 @@ pub fn FourierDynamic(comptime T: type) type {
     };
 }
 
-// Utility function t
+// Utility function
 
 //  fft_idx: index to be reversed
 //  width: the number of bits to reverse based on fft levels

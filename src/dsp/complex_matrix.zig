@@ -3,7 +3,7 @@ const utilities = @import("utils.zig");
 const complex_list = @import("complex_list.zig");
 const waves = @import("waves.zig");
 
-const log = std.log.scoped(.dsp);
+const log = @import("log.zig").log;
 
 const MatrixError = error{
     out_of_bounds,
@@ -74,8 +74,15 @@ pub fn ComplexMatrix(comptime T: type) type {
             // the input must be at least the length of the matrix
             // if the input is longer, we ignore the extra values
             // this is useful to ignore the output of a fft that is longer than the matrix (e.g. the negative frequencies)
-            if (input.len < len) return MatrixError.invalid_input_length;
-            if (axis_index >= len) return MatrixError.out_of_bounds;
+            if (input.len < len) {
+                log.err("Matrix {d}x{d} {s}: setRowOrColumn Invalid input length: {d}", .{ self.rows, self.cols, @tagName(self.direction), input.len });
+                return MatrixError.invalid_input_length;
+            }
+
+            if (axis_index >= len) {
+                log.err("Matrix {d}x{d} {s}: setRowOrColumn Out of bounds, axis_index: {d}", .{ self.rows, self.cols, @tagName(self.direction), axis_index });
+                return MatrixError.out_of_bounds;
+            }
 
             switch (self.direction) {
                 .row_major => {
@@ -97,11 +104,18 @@ pub fn ComplexMatrix(comptime T: type) type {
         pub fn getRowOrColumnView(self: Self, axis_index: usize) !ComplexList {
             const data = switch (self.direction) {
                 .row_major => row: {
-                    if (axis_index >= self.rows) return MatrixError.out_of_bounds;
+                    if (axis_index >= self.rows) {
+                        log.err("Matrix {d}x{d} column_major: getRowOrcolumnView: Axis index out of bounds, row: {d}", .{ self.rows, self.cols, axis_index });
+                        return MatrixError.out_of_bounds;
+                    }
+
                     break :row self.data[axis_index * self.cols * 2 .. (axis_index + 1) * self.cols * 2];
                 },
                 .column_major => col: {
-                    if (axis_index >= self.cols) return MatrixError.out_of_bounds;
+                    if (axis_index >= self.cols) {
+                        log.err("Matrix {d}x{d} column_major: getRowOrcolumnView: Axis index out of bounds, col: {d}", .{ self.rows, self.cols, axis_index });
+                        return MatrixError.out_of_bounds;
+                    }
                     break :col self.data[axis_index * self.rows * 2 .. (axis_index + 1) * self.rows * 2];
                 },
             };
@@ -111,7 +125,7 @@ pub fn ComplexMatrix(comptime T: type) type {
 
         pub fn set(self: *Self, row: usize, col: usize, value: ComplexType) !void {
             if (row >= self.rows or col >= self.cols) {
-                //log.err("Out of bounds: {d}x{d} matrix, row: {d}, col: {d}", .{ self.rows, self.cols, row, col });
+                log.err("Matrix {d}x{d}: set: Out of bounds: row: {d}, col: {d}", .{ self.rows, self.cols, row, col });
                 return MatrixError.out_of_bounds;
             }
             self.data[self.index(row, col)] = value.re;
@@ -176,7 +190,7 @@ pub fn Matrix(comptime T: type) type {
 
         pub fn set(self: *Self, row: usize, col: usize, value: T) !void {
             if (row >= self.rows or col >= self.cols) {
-                // log.err("Out of bounds: {d}x{d} matrix, row: {d}, col: {d}", .{ self.rows, self.cols, row, col });
+                log.err("Matrix {d}x{d}: set: Out of bounds: row: {d}, col: {d}", .{ self.rows, self.cols, row, col });
                 return MatrixError.out_of_bounds;
             }
 
@@ -185,7 +199,7 @@ pub fn Matrix(comptime T: type) type {
 
         pub fn setRow(self: *Self, row: usize, values: []T) !void {
             if (row >= self.rows or values.len != self.cols) {
-                // log.err("Invalid row dimensions: {d}x{d} matrix, row: {d}, values: {d}", .{ self.rows, self.cols, row, values.len });
+                log.err("Matrix{d}x{d}: setRow: Invalid row dimensions: row: {d}, values: {d}", .{ self.rows, self.cols, row, values.len });
                 return MatrixError.out_of_bounds;
             }
 
@@ -196,7 +210,7 @@ pub fn Matrix(comptime T: type) type {
 
         pub fn setCol(self: *Self, col: usize, values: []T) !void {
             if (col >= self.cols or values.len != self.rows) {
-                // log.err("Invalid column dimensions: {d}x{d} matrix, col: {d}, values: {d}", .{ self.rows, self.cols, col, values.len });
+                log.err("Matrix{d}x{d}: setCol: Invalid column dimensions: col: {d}, values: {d}", .{ self.rows, self.cols, col, values.len });
                 return MatrixError.out_of_bounds;
             }
 
@@ -207,7 +221,7 @@ pub fn Matrix(comptime T: type) type {
 
         pub fn mul(self: Self, allocator: std.mem.Allocator, other: Self) !Self {
             if (self.cols != other.rows) {
-                // log.err("Invalid matrix dimensions: {d}x{d} * {d}x{d}", .{ self.rows, self.cols, other.rows, other.cols });
+                log.err("Matrix multiplication: Invalid matrix dimensions: {d}x{d} * {d}x{d}", .{ self.rows, self.cols, other.rows, other.cols });
                 return MatrixError.invalid_matrix_dimensions;
             }
 

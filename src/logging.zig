@@ -12,6 +12,7 @@ pub fn logFn(
     const scope_prefix = "(" ++ switch (scope) {
         .main,
         .alsa,
+        .dsp,
         std.log.default_log_scope,
         => @tagName(scope),
         else => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
