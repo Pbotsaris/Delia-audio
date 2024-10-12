@@ -344,20 +344,20 @@ fn stft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
 
     defer mat.deinit();
 
-    const pylist_result: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(mat.cols)));
+    const pylist_result: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(mat.rows)));
 
     if (pylist_result == null) {
         return handleError(pylist_result, "Failed to create result list.");
     }
 
-    for (0..mat.cols) |col| {
-        const inner_list: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(mat.rows)));
+    for (0..mat.rows) |row| {
+        const inner_list: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(mat.cols)));
 
         if (inner_list == null) {
             return handleError(pylist_result, "Failed to create inner list.");
         }
 
-        for (0..mat.rows) |row| {
+        for (0..mat.cols) |col| {
             const mat_item = mat.get(row, col) orelse return handleError(pylist_result, "Failed to access item in ComplexMatrix.");
             const py_item = py.PyComplex_FromDoubles(mat_item.re, mat_item.im);
 
@@ -365,10 +365,10 @@ fn stft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
                 return handleError(pylist_result, "Failed to create complex object.");
             }
 
-            _ = py.PyList_SetItem(inner_list, @as(py.Py_ssize_t, @intCast(row)), py_item);
+            _ = py.PyList_SetItem(inner_list, @as(py.Py_ssize_t, @intCast(col)), py_item);
         }
 
-        _ = py.PyList_SetItem(pylist_result, @as(py.Py_ssize_t, @intCast(col)), inner_list);
+        _ = py.PyList_SetItem(pylist_result, @as(py.Py_ssize_t, @intCast(row)), inner_list);
     }
 
     return pylist_result;
