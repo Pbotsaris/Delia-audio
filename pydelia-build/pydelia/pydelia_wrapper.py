@@ -41,8 +41,8 @@ def fft_convolve(vec1: List[float], vec2: List[float]) -> List[float]:
 def fft_frequencies(n: int, sr: int) -> List[float]:
     return _pydelia.fft_frequencies(n, sr)
 
-def decibels_from_magnitude(vec: List[float]) -> List[float]:
-    return _pydelia.decibels_from_magnitude(vec)
+def decibels_from_magnitude(vec: List[float], reference: float = 0.5) -> List[float]:
+    return _pydelia.decibels_from_magnitude(vec, reference)
 
 def blackman(vec: List[float]) -> List[float]:
     return _pydelia.blackman(vec)

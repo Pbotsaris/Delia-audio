@@ -11,8 +11,8 @@ const std = @import("std");
 const dsp = @import("dsp/dsp.zig");
 
 // using float64 across the board
-var zero: usize = 0;
 const T: type = f64;
+var zero: usize = 0;
 
 pub const std_options = .{
     .log_level = .err,
@@ -55,31 +55,50 @@ fn magnitude(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*]py.Py
 fn decibelFromMagnitude(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObject {
     _ = self;
 
-    const pylist: [*c]py.PyObject = parseArgument(args, "O") //
-    orelse return @as([*c]py.PyObject, (@ptrFromInt(zero)));
+    var pylist: [*c]py.PyObject = null;
+    var reference: T = 0;
+
+    if (py.PyArg_ParseTuple(args, "Od", &pylist, &reference) == 0) {
+        return handleError(null, "Failed to parse arguments");
+    }
+
+    if (reference == 0) {
+        return handleError(null, "Reference must be greater than 0.");
+    }
+
+    if (py.PyList_Check(pylist) == 0) {
+        return handleError(null, "Argument must be a list.");
+    }
 
     const pylist_size: usize = @intCast(py.PyList_Size(pylist));
+
+    if (pylist_size == 0) {
+        return handleError(null, "List must not be empty.");
+    }
+
+    const py_result: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(pylist_size)));
+
     const utils = dsp.utils.Utils(T);
 
     for (0..pylist_size) |i| {
         const item = py.PyList_GetItem(pylist, @as(py.Py_ssize_t, @intCast(i)));
 
         if (py.PyFloat_Check(item) == 0) {
-            return handleError(pylist, "List must contain only floats.");
+            return handleError(py_result, "List must contain only floats.");
         }
 
         // 0.5 reference gives 0db a sine +1 to -1
-        const db = utils.DecibelsFromMagnitude(py.PyFloat_AsDouble(item), 0.5);
+        const db = utils.DecibelsFromMagnitude(py.PyFloat_AsDouble(item), reference);
         const py_float: [*c]py.PyObject = py.PyFloat_FromDouble(db);
 
         if (py_float == null) {
-            return handleError(pylist, "Failed to create float object.");
+            return handleError(py_result, "Failed to create float object.");
         }
 
-        _ = py.PyList_SetItem(pylist, @as(py.Py_ssize_t, @intCast(i)), py_float);
+        _ = py.PyList_SetItem(py_result, @as(py.Py_ssize_t, @intCast(i)), py_float);
     }
 
-    return pylist;
+    return py_result;
 }
 
 fn phase(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObject {
@@ -311,7 +330,7 @@ fn stft(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.PyObje
     const short_time = dsp.analysis.ShortTimeFourierDynamic(T).init(allocator, .{
         .window_size = win_size,
         .hop_size = dsp.analysis.HopSize.fromSize(hop_size, window_size),
-        .normalize = false,
+        .normalize = true,
         .window_function = .hann,
     }) catch |err| {
         log.err("STFT Error: {any}", .{err});

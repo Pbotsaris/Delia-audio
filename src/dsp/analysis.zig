@@ -1,3 +1,4 @@
+//TODO: Maybe revise this module and allow for more control such as we window_function size as well as introduce padding
 const std = @import("std");
 const transforms = @import("transforms.zig");
 const ComplexMatrix = @import("complex_matrix.zig").ComplexMatrix;
@@ -328,6 +329,7 @@ test "ShortTimeFourierStatic: STFT" {
 
     for (0..mat.rows) |row| {
         for (0..mat.cols) |col| {
+            // TODO: get a test case
             const expected = test_data.stft_expected[row][col];
             const actual = mat.get(row, col).?;
 
@@ -397,6 +399,7 @@ test "ShorttimeFourierDynamic: Run" {
 
     for (0..mat.cols) |col| {
         for (0..mat.rows) |row| {
+            // TODO: get a test case
             const actual = mat.get(row, col).?;
             _ = actual;
             //       std.debug.print("Actual ({d}x{d}): re: {d:.4}, im: {d:.4}\n", .{ row, col, actual.re, actual.im });

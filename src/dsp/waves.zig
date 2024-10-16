@@ -39,3 +39,13 @@ pub fn Sine(comptime T: type) type {
         }
     };
 }
+
+pub fn unitInpulse(T: type, output: []T) []T {
+    output[0] = 1;
+
+    for (output[1..]) |*sample| {
+        sample.* = 0;
+    }
+
+    return output;
+}
