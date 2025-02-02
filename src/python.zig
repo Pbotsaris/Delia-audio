@@ -146,8 +146,8 @@ fn sineWave(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.Py
         return handleError(null, "Failed to parse arguments");
     }
 
-    var sineGen = dsp.waves.Sine(T).init(@floatFromInt(freq), amp, @floatFromInt(sr));
-    const buf_size: usize = sineGen.bufferSizeFor(dur);
+    var w = dsp.waves.Wave(T).init(@floatFromInt(freq), amp, @floatFromInt(sr));
+    const buf_size: usize = w.bufferSizeFor(dur);
 
     var allocator = gpa.allocator();
 
@@ -156,7 +156,7 @@ fn sineWave(self: [*c]py.PyObject, args: [*c]py.PyObject) callconv(.C) [*c]py.Py
     };
 
     defer allocator.free(buf);
-    buf = sineGen.generate(buf);
+    buf = w.sine(buf);
 
     const list: [*c]py.PyObject = py.PyList_New(@as(py.Py_ssize_t, @intCast(buf_size)));
 

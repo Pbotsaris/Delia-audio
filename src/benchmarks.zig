@@ -5,9 +5,9 @@ const zbench = @import("zbench");
 fn fftPowerOfTwo(allocator: std.mem.Allocator) void {
     const transform = dsp.transforms.FourierDynamic(f32);
 
-    const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = dsp.waves.Wave(f32).init(400.0, 1.0, 44100.0);
     var buffer: [4096]f32 = undefined;
-    const sine = sineGeneration.generate(&buffer);
+    const sine = w.sine(&buffer);
 
     var out = transform.fft(allocator, sine) catch |err| {
         std.debug.print("Error: {}\n", .{err});
@@ -19,10 +19,10 @@ fn fftPowerOfTwo(allocator: std.mem.Allocator) void {
 
 fn fftNonPowerOfTwo(allocator: std.mem.Allocator) void {
     const transform = dsp.transforms.FourierDynamic(f32);
-    const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = dsp.waves.Wave(f32).init(400.0, 1.0, 44100.0);
 
     var buffer: [4099]f32 = undefined;
-    const sine = sineGeneration.generate(&buffer);
+    const sine = w.sine(&buffer);
 
     var out = transform.fft(allocator, sine) catch |err| {
         std.debug.print("Error: {}\n", .{err});
@@ -35,9 +35,9 @@ fn fftNonPowerOfTwo(allocator: std.mem.Allocator) void {
 fn fftStatic(allocator: std.mem.Allocator) void {
     const transform = dsp.transforms.FourierStatic(f32, .wz_4096);
 
-    const sineGeneration = dsp.waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = dsp.waves.Wave(f32).init(400.0, 1.0, 44100.0);
     var buffer: [4096]f32 = undefined;
-    const sine = sineGeneration.generate(&buffer);
+    const sine = w.generate(&buffer);
 
     // this could easily be a fixed-size allocator and would improve performance
     // as complex vector is always modified in place

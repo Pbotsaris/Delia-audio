@@ -1,38 +1,29 @@
 const std = @import("std");
 const alsa = @import("../alsa.zig");
+const wave = @import("../../dsp/waves.zig");
 
 // providing the format at comptime type will allow operation on device to be type safe
 const Device = alsa.device.GenericDevice(.signed_16bits_little_endian);
 
-// testing with a simple sine wave
-var phase: f32 = 0.0;
+var w = wave.Wave(f32).init(100.0, 0.00004, 48000.0);
 
 fn callback(data: Device.AudioDataType()) void {
-    const freq: f32 = 400.0;
-    const amp: f32 = 0.001;
-    const sr: f32 = @floatFromInt(data.sample_rate);
-    const phase_inc: f32 = 2.0 * std.math.pi * freq / sr;
+    w.setSampleRate(@floatFromInt(data.sample_rate));
 
     for (0..data.totalSampleCount()) |_| {
-        const sample = amp * std.math.sin(phase);
+        const sample = w.sawtoothSample();
 
         for (0..data.channels) |_| {
             data.writeSample(sample) catch {
                 return;
             };
         }
-
-        phase += phase_inc;
-
-        if (phase >= 2.0 * std.math.pi) {
-            phase -= 2.0 * std.math.pi;
-        }
     }
 }
 
 pub fn playbackSineWave() void {
     var dev = Device.init(.{
-        .sample_rate = .sr_48khz,
+        .sample_rate = .sr_44k100hz,
         .channels = .stereo,
         .stream_type = .playback,
         .buffer_size = .bz_512,

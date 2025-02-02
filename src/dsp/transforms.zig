@@ -12,8 +12,8 @@ const Direction = enum {
 };
 
 pub const WindowSize = enum(usize) {
-    wz_2 = 2,
     wz_4 = 4,
+    wz_2 = 2,
     wz_8 = 8,
     wz_16 = 16,
     wz_32 = 32,
@@ -644,9 +644,9 @@ test "FourierDynamic: dft simple" {
 test "FourierDynamic: dft sine" {
     const allocator = std.testing.allocator;
 
-    const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = waves.Wave(f32).init(400.0, 1.0, 44100.0);
     var buffer: [128]f32 = undefined;
-    const sine = sineGeneration.generate(&buffer);
+    const sine = w.sine(&buffer);
 
     const transforms = FourierDynamic(f32);
     var output = try transforms.dft(allocator, sine);
@@ -737,9 +737,9 @@ test "FourierDynamic: inverse fft simple power non power of two" {
 test "FourierDynamic: fft sine power of two" {
     const allocator = std.testing.allocator;
 
-    const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = waves.Wave(f32).init(400.0, 1.0, 44100.0);
     var buffer: [128]f32 = undefined;
-    const sine = sineGeneration.generate(&buffer);
+    const sine = w.sine(&buffer);
 
     const transforms = FourierDynamic(f32);
     var output = try transforms.fft(allocator, sine);
@@ -758,9 +758,9 @@ test "FourierDynamic: fft sine power of two" {
 test "FourierDynamic: inverse fft sine wave power non power of two" {
     const allocator = std.testing.allocator;
 
-    const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = waves.Wave(f32).init(400.0, 1.0, 44100.0);
     var buffer: [128]f32 = undefined;
-    const sine = sineGeneration.generate(&buffer);
+    const sine = w.sine(&buffer);
 
     // TODO: this seems wrong?
     const transforms = FourierDynamic(f32);
@@ -879,9 +879,9 @@ test "FourierStatic: fft multiple simple input" {
 test "FourierStatic: fft sine" {
     const allocator = std.testing.allocator;
 
-    const sineGeneration = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = waves.Wave(f32).init(400.0, 1.0, 44100.0);
     var buffer: [128]f32 = undefined;
-    const sine = sineGeneration.generate(&buffer);
+    const sine = w.sine(&buffer);
 
     const transforms = FourierStatic(f32, .wz_128);
 

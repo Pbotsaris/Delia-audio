@@ -336,10 +336,7 @@ test "ShortTimeFourierStatic: STFT" {
             _ = expected;
             _ = actual;
 
-            //        std.debug.print("Actual   ({d}x{d}): re: {d:.4}, im: {d:.4}\n", .{ row, col, actual.re, actual.im });
-            //      std.debug.print("Expected ({d}x{d}): re: {d:.4}, im: {d:.4}\n", .{ row, col, expected.re, expected.im });
-            //          std.debug.print("-\n", .{});
-            //           try std.testing.expectApproxEqAbs(expected.im, actual.im, 1);
+            //         try std.testing.expectApproxEqAbs(expected.im, actual.im, 1);
             //         try std.testing.expectApproxEqAbs(expected.re, actual.re, 1);
         }
     }
@@ -350,9 +347,9 @@ test "ShortTimeFourierStatic: returns an error when input size is less than wind
     const short_time = try ShortTimeFourierStatic(f64, .wz_512).init(.{});
 
     var input: [128]f64 = undefined;
-    const sine = waves.Sine(f64).init(400.0, 1.0, 44100.0);
+    var w = waves.Wave(f64).init(400.0, 1.0, 44100.0);
 
-    const sine_input = sine.generate(&input);
+    const sine_input = w.sine(&input);
     const err = short_time.stft(allocator, sine_input);
 
     try std.testing.expectError(Error.invalid_input_size, err);
@@ -380,9 +377,9 @@ test "ShorttimeFourierDynamic: Run" {
     const allocator = std.testing.allocator;
 
     var input: [128]f32 = undefined;
-    const sine = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = waves.Wave(f32).init(400.0, 1.0, 44100.0);
 
-    const sine_input = sine.generate(&input);
+    const sine_input = w.sine(&input);
 
     const stft = try ShortTimeFourierDynamic(f32).init(allocator, .{
         .window_size = .wz_64,

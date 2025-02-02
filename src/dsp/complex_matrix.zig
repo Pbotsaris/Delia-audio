@@ -502,7 +502,9 @@ test "ComplexMatrix set row or column using setRowOrColumn with multiple values"
     const allocator = std.testing.allocator;
 
     var input: [126]f32 = undefined;
-    const sine = waves.Sine(f32).init(400.0, 0.8, 44100).generate(&input);
+    var w = waves.Wave(f32).init(400.0, 0.8, 44100);
+
+    const sine = w.sine(&input);
 
     var mat = try ComplexMatrix(f32).init(allocator, .{ .rows = sine.len, .cols = 3, .direction = .column_major });
 

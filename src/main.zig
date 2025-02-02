@@ -11,7 +11,7 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    alsa_examples.printingHardwareInfo();
+    alsa_examples.playbackSineWave();
 }
 
 test {

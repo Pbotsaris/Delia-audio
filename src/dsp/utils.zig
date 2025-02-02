@@ -87,9 +87,9 @@ test "DSP Utils hanning window function" {
     const utils = Utils(f32);
 
     var input: [128]f32 = undefined;
-    const sine = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = waves.Wave(f32).init(400.0, 1.0, 44100.0);
 
-    const sine_input = sine.generate(&input);
+    const sine_input = w.sine(&input);
 
     for (0..sine_input.len) |i| {
         sine_input[i] *= utils.hanning(i, input.len);
@@ -104,9 +104,9 @@ test "DSP Utils blackman window function" {
     const utils = Utils(f32);
 
     var input: [128]f32 = undefined;
-    const sine = waves.Sine(f32).init(400.0, 1.0, 44100.0);
+    var w = waves.Wave(f32).init(400.0, 1.0, 44100.0);
 
-    const sine_input = sine.generate(&input);
+    const sine_input = w.sine(&input);
 
     for (0..sine_input.len) |i| {
         sine_input[i] *= utils.blackman(i, input.len);
