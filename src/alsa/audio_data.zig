@@ -601,7 +601,6 @@ test "AudioData.linearMapOut 64 bits precision" {
     const sample_int_mid = SignedAudioData.linearMapOut(0);
     const sample_int_quarter = SignedAudioData.linearMapOut(signed_int_quarter);
     const sample_int_three_quarter = SignedAudioData.linearMapOut(signed_int_three_quarter);
-
     const sample_uint_max = UnsignedAudioData.linearMapOut(unsigned_int_max);
     const sample_uint_min = UnsignedAudioData.linearMapOut(0);
     const sample_uint_mid = UnsignedAudioData.linearMapOut(unsigned_int_mid);

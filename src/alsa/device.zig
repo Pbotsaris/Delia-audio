@@ -211,6 +211,7 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
 
             // always mode none for now
             var err = c_alsa.snd_pcm_open(&pcm_handle, opts.ident.ptr, @intFromEnum(opts.stream_type), @intFromEnum(Mode.none));
+
             if (err < 0) {
                 log.warn("Failed to open PCM for ident '{s}': '{s}'. Attempting default...", .{ opts.ident, c_alsa.snd_strerror(err) });
 
