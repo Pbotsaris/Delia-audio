@@ -186,8 +186,8 @@ pub const SampleType = enum(u32) {
 pub const FormatType = enum(c_int) {
     // unknown = c_alsa.SND_PCM_FORMAT_UNKNOWN,
 
-    // 8-bit integer formats
     signed_8bits = c_alsa.SND_PCM_FORMAT_S8,
+    // 8-bit integer formats
     unsigned_8bits = c_alsa.SND_PCM_FORMAT_U8,
 
     // 16-bit integer formats

@@ -10,7 +10,9 @@ pub const std_options = .{
 
 const log = std.log.scoped(.main);
 
-pub fn main() !void {}
+pub fn main() !void {
+    alsa_examples.printingHardwareInfo();
+}
 
 test {
     std.testing.refAllDeclsRecursive(alsa);
