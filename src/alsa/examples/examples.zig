@@ -5,13 +5,13 @@ const wave = @import("../../dsp/waves.zig");
 // providing the format at comptime type will allow operation on device to be type safe
 const Device = alsa.device.GenericDevice(.signed_16bits_little_endian);
 
-var w = wave.Wave(f32).init(100.0, 0.00004, 48000.0);
+var w = wave.Wave(f32).init(100.0, 0.05, 48000.0);
 
 fn callback(data: Device.AudioDataType()) void {
     w.setSampleRate(@floatFromInt(data.sample_rate));
 
     for (0..data.totalSampleCount()) |_| {
-        const sample = w.sawtoothSample();
+        const sample = w.sineSample();
 
         for (0..data.channels) |_| {
             data.writeSample(sample) catch {

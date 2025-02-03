@@ -41,10 +41,10 @@ pub fn Format(comptime T: type) type {
 
         pub fn init(fmt: FormatType) Self {
             const int_fmt = @intFromEnum(fmt);
-            const is_big_endian: bool = c_alsa.snd_pcm_format_little_endian(int_fmt) == 1;
+            const is_little_endian: bool = c_alsa.snd_pcm_format_little_endian(int_fmt) == 1;
             const is_signed: bool = c_alsa.snd_pcm_format_signed(int_fmt) == 1;
 
-            const byte_order = if (is_big_endian) ByteOrder.big_endian else ByteOrder.little_endian;
+            const byte_order = if (is_little_endian) ByteOrder.little_endian else ByteOrder.big_endian;
             const sign_type = if (is_signed) Signedness.signed else Signedness.unsigned;
 
             const bit_depth = c_alsa.snd_pcm_format_width(int_fmt);

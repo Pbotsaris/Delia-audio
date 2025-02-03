@@ -12,6 +12,7 @@ const log = std.log.scoped(.main);
 
 pub fn main() !void {
     alsa_examples.playbackSineWave();
+    //alsa_examples.printingHardwareInfo();
 }
 
 test {
