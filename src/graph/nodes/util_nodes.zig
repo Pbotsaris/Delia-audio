@@ -1,9 +1,13 @@
 const node_interface = @import("node_interface.zig");
 
 pub fn GainNode(comptime T: type) type {
+    if (T != f32 and T != f64) {
+        @compileError("GainNode operates on f32 or f64");
+    }
+
     const GenericNode = node_interface.GenericNode(T);
     return struct {
-        gain: f64,
+        gain: T,
 
         const Self = @This();
         const PrepareContext = GenericNode.PrepareContext;
