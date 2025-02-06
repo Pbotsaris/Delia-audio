@@ -38,7 +38,7 @@ pub fn Wave(comptime T: type) type {
             return output;
         }
 
-        pub fn sineSample(self: *Self) T {
+        pub inline fn sineSample(self: *Self) T {
             const sample = self.amp * std.math.sin(self.phase);
             self.phase += self.inc;
 
@@ -49,7 +49,7 @@ pub fn Wave(comptime T: type) type {
             return sample;
         }
 
-        pub fn sawtoothSample(self: *Self) T {
+        pub inline fn sawtoothSample(self: *Self) T {
             const sample = self.amp * (2 * self.phase / (two * std.math.pi) - 1);
             self.phase += self.inc;
 

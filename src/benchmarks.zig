@@ -37,7 +37,7 @@ fn fftStatic(allocator: std.mem.Allocator) void {
 
     var w = dsp.waves.Wave(f32).init(400.0, 1.0, 44100.0);
     var buffer: [4096]f32 = undefined;
-    const sine = w.generate(&buffer);
+    const sine = w.sine(&buffer);
 
     // this could easily be a fixed-size allocator and would improve performance
     // as complex vector is always modified in place
@@ -54,6 +54,16 @@ fn fftStatic(allocator: std.mem.Allocator) void {
     };
 }
 
+fn sineWave(_: std.mem.Allocator) void {
+    var w = dsp.waves.Wave(f32).init(400.0, 1.0, 44100.0);
+    var buffer: [4096]f32 = undefined;
+
+    const sine = w.sine(&buffer);
+    _ = sine;
+
+    return;
+}
+
 pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
     const allocator = std.heap.page_allocator;
@@ -64,5 +74,6 @@ pub fn main() !void {
     try bench.add("fft power-of-2", fftPowerOfTwo, .{});
     try bench.add("fft non power-of-2", fftNonPowerOfTwo, .{});
     try bench.add("fft static", fftStatic, .{});
+    try bench.add("sine wave", sineWave, .{});
     try bench.run(stdout);
 }

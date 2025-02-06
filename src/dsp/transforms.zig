@@ -601,12 +601,12 @@ pub fn FourierDynamic(comptime T: type) type {
 //  fft_idx: index to be reversed
 //  width: the number of bits to reverse based on fft levels
 //  e.g. so if in.len = 8, width would be 3 because log2(8) = 3
-fn reverseBits(fft_idx: usize, width: usize) usize {
+inline fn reverseBits(fft_idx: usize, width: usize) usize {
     // u6 because usize is 64 bits and log2(64) = 6
     return @bitReverse(fft_idx) >> @as(u6, @intCast(@bitSizeOf(usize) - width));
 }
 
-fn reverseBitsDiscrete(val: usize, width: usize) usize {
+inline fn reverseBitsDiscrete(val: usize, width: usize) usize {
     var result: usize = 0;
     var idx: usize = val;
     var i: usize = 0;
@@ -619,7 +619,7 @@ fn reverseBitsDiscrete(val: usize, width: usize) usize {
     return result;
 }
 
-fn isPowerOfTwo(n: usize) bool {
+inline fn isPowerOfTwo(n: usize) bool {
     return n != 0 and n & (n - 1) == 0;
 }
 

@@ -1,7 +1,8 @@
 const std = @import("std");
-const node_interface = @import("nodes/node_interface.zig");
 const bitmap = @import("bitmap.zig");
-const BoxChars = @import("box_chars.zig");
+
+pub const nodes = @import("nodes/nodes.zig");
+pub const scheduler = @import("scheduler.zig");
 
 pub const ExecutionNode = struct {
     index: usize,
@@ -13,12 +14,12 @@ pub const ExecutionQueue = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, capacity: usize) !ExecutionQueue {
-        var nodes = std.MultiArrayList(ExecutionNode){};
-        try nodes.ensureTotalCapacity(allocator, capacity);
+        var nds = std.MultiArrayList(ExecutionNode){};
+        try nds.ensureTotalCapacity(allocator, capacity);
 
         return .{
             .allocator = allocator,
-            .nodes = nodes,
+            .nodes = nds,
         };
     }
 
@@ -49,7 +50,7 @@ pub fn Graph(comptime T: type) type {
 
     return struct {
         const Self = @This();
-        const GenericNode = node_interface.GenericNode(T);
+        const GenericNode = nodes.interface.GenericNode(T);
 
         nodes: std.ArrayList(GenericNode),
         edges: std.ArrayList(Edges),
@@ -216,8 +217,8 @@ const GainNode = struct {
     gain: f64,
 
     const Self = @This();
-    const PrepareContext = node_interface.GenericNode(f64).PrepareContext;
-    const ProcessContext = node_interface.GenericNode(f64).ProcessContext;
+    const PrepareContext = nodes.interface.GenericNode(f64).PrepareContext;
+    const ProcessContext = nodes.interface.GenericNode(f64).ProcessContext;
 
     // for testing, no need to implement
     pub fn process(_: *Self, _: ProcessContext) void {}
@@ -278,22 +279,22 @@ test "Graph: complex DAG" {
     var graph = Graph(f64).init(allocator, .{});
     defer graph.deinit();
 
-    const nodes = [_]Graph(f64).NodeHandle{
+    const nds = [_]Graph(f64).NodeHandle{
         try graph.addNode(GainNode{ .gain = 0.1 }),
         try graph.addNode(GainNode{ .gain = 0.2 }),
         try graph.addNode(GainNode{ .gain = 0.3 }),
         try graph.addNode(GainNode{ .gain = 0.4 }),
     };
 
-    try nodes[0].connect(nodes[1]);
-    try nodes[0].connect(nodes[2]);
-    try nodes[1].connect(nodes[3]);
-    try nodes[2].connect(nodes[3]);
+    try nds[0].connect(nds[1]);
+    try nds[0].connect(nds[2]);
+    try nds[1].connect(nds[3]);
+    try nds[2].connect(nds[3]);
 
     var result = try graph.topologicalSortAlloc(allocator);
     defer result.deinit();
 
     // Verify node 0 comes first and node 3 comes last
-    try std.testing.expectEqual(result.nodes.items(.index)[0], nodes[0].index);
-    try std.testing.expectEqual(result.nodes.items(.index)[3], nodes[3].index);
+    try std.testing.expectEqual(result.nodes.items(.index)[0], nds[0].index);
+    try std.testing.expectEqual(result.nodes.items(.index)[3], nds[3].index);
 }
