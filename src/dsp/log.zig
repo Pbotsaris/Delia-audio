@@ -5,6 +5,7 @@ pub const log = if (builtin.is_test)
     struct {
         pub const base = std.log.scoped(.dsp);
         pub const warn = base.warn;
+        // warn during tests
         pub const err = warn;
         pub const info = base.info;
         pub const debug = base.debug;

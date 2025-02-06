@@ -5,7 +5,7 @@ const wave = @import("../../dsp/waves.zig");
 // providing the format at comptime type will allow operation on device to be type safe
 const Device = alsa.device.GenericDevice(.signed_16bits_little_endian);
 
-var w = wave.Wave(f32).init(100.0, 0.05, 48000.0);
+var w = wave.Wave(f32).init(100.0, 0.2, 48000.0);
 
 fn callback(data: Device.AudioDataType()) void {
     w.setSampleRate(@floatFromInt(data.sample_rate));
