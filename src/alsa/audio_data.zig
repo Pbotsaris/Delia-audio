@@ -44,7 +44,7 @@ pub fn GenericAudioData(format_type: FormatType) type {
             };
         }
 
-        pub fn writeSample(self: *Self, sample: FloatType()) AudioDataError!void {
+        pub inline fn writeSample(self: *Self, sample: FloatType()) AudioDataError!void {
             const sample_size = @sizeOf(T);
 
             if (sample_size != self.format.byte_rate) {

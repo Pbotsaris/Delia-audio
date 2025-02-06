@@ -1,5 +1,5 @@
 const std = @import("std");
-const node_interface = @import("node_interface.zig");
+const node_interface = @import("nodes/node_interface.zig");
 const bitmap = @import("bitmap.zig");
 const BoxChars = @import("box_chars.zig");
 
@@ -61,8 +61,8 @@ pub fn Graph(comptime T: type) type {
         };
 
         const GraphError = error{
-            InvalidNode,
-            CycleDetected,
+            invalid_node,
+            cycle_detected,
         };
 
         const Edges = struct {
@@ -127,6 +127,8 @@ pub fn Graph(comptime T: type) type {
                 try self.topologicalStatic(&results);
             }
 
+            // TODO, dynamic version for very long graphs
+
             return results;
         }
 
@@ -144,7 +146,7 @@ pub fn Graph(comptime T: type) type {
             var inputs_count: usize = 0;
 
             for (self.edges.items) |edge| {
-                if (edge.to >= node_count) return GraphError.InvalidNode;
+                if (edge.to >= node_count) return GraphError.invalid_node;
                 in_degrees[edge.to] += 1;
             }
 
@@ -183,16 +185,16 @@ pub fn Graph(comptime T: type) type {
             }
 
             if (results.nodes.len != node_count) {
-                return GraphError.CycleDetected;
+                return GraphError.cycle_detected;
             }
         }
 
+        // for debugging purposes
         fn exportDot(self: Self, writer: anytype) !void {
             try writer.writeAll("digraph AudioGraph {\n");
             try writer.writeAll("    rankdir=LR;\n");
             try writer.writeAll("    node [shape=box];\n\n");
 
-            // Write nodes
             for (self.nodes.items, 0..) |node, i| {
                 const node_type = @typeName(@TypeOf(node));
                 try writer.print("    node{d} [label=\"{s}\"];\n", .{ i, node_type });
@@ -200,7 +202,6 @@ pub fn Graph(comptime T: type) type {
 
             try writer.writeAll("\n");
 
-            // Write edges
             for (self.edges.items) |edge| {
                 try writer.print("    node{d} -> node{d};\n", .{ edge.from, edge.to });
             }
@@ -212,16 +213,15 @@ pub fn Graph(comptime T: type) type {
 
 // just an example to use in the graph
 const GainNode = struct {
-    // must be same float as graph
     gain: f64,
 
     const Self = @This();
+    const PrepareContext = node_interface.GenericNode(f64).PrepareContext;
+    const ProcessContext = node_interface.GenericNode(f64).ProcessContext;
 
-    pub fn process(self: *Self, input: []f64, output: []f64) void {
-        for (input, 0..) |value, i| {
-            output[i] = value * self.gain;
-        }
-    }
+    // for testing, no need to implement
+    pub fn process(_: *Self, _: ProcessContext) void {}
+    pub fn prepare(_: *Self, _: PrepareContext) void {}
 };
 
 test "Graph: connect nodes validation" {
@@ -270,7 +270,7 @@ test "Graph: detect cycles" {
     try node_a.connect(node_b);
     try node_b.connect(node_a);
 
-    try std.testing.expectError(Graph(f64).GraphError.CycleDetected, graph.topologicalSortAlloc(allocator));
+    try std.testing.expectError(Graph(f64).GraphError.cycle_detected, graph.topologicalSortAlloc(allocator));
 }
 
 test "Graph: complex DAG" {

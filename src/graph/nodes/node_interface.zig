@@ -1,4 +1,5 @@
 const std = @import("std");
+const audio_buffer = @import("../audio_buffer.zig");
 
 pub const NodeStatus = enum(u8) {
     init,
@@ -14,20 +15,24 @@ pub fn GenericNode(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        ptr: *anyopaque,
-        vtable: *const VTable,
-        allocator: std.mem.Allocator,
-        status: std.atomic.Value(NodeStatus),
-
-        pub const VTable = struct {
-            process: *const fn (*anyopaque, []T, []T) void,
-            destroy: *const fn (*anyopaque, std.mem.Allocator) void,
-        };
-
         pub const PrepareContext = struct {
             block_size: usize,
             sample_rate: T,
         };
+
+        pub const ProcessContext = struct {
+            buffer: *audio_buffer.ChannelView(T),
+        };
+
+        pub const VTable = struct {
+            process: *const fn (*anyopaque, ProcessContext) void,
+            destroy: *const fn (*anyopaque, std.mem.Allocator) void,
+        };
+
+        ptr: *anyopaque,
+        vtable: *const VTable,
+        allocator: std.mem.Allocator,
+        status: std.atomic.Value(NodeStatus),
 
         pub fn createNode(allocator: std.mem.Allocator, node: anytype) !Self {
             const ptr = try allocator.create(@TypeOf(node));
@@ -55,9 +60,9 @@ pub fn GenericNode(comptime T: type) type {
             }
 
             const gen = struct {
-                fn processFn(ctx: *anyopaque, input: []T, output: []T) void {
+                fn processFn(ctx: *anyopaque, process_ctx: ProcessContext) void {
                     const self = @as(PtrType, @ptrCast(@alignCast(ctx)));
-                    self.process(input, output);
+                    self.process(process_ctx);
                 }
 
                 fn destroyFn(ctx: *anyopaque, alloc: std.mem.Allocator) void {
@@ -79,8 +84,8 @@ pub fn GenericNode(comptime T: type) type {
             };
         }
 
-        pub inline fn process(self: Self, input: []T, output: []T) void {
-            self.vtable.process(self.ptr, input, output);
+        pub inline fn process(self: Self, ctx: ProcessContext) void {
+            self.vtable.process(self.ptr, ctx);
         }
 
         pub inline fn destroy(self: *Self) void {
@@ -103,12 +108,17 @@ const GainNode = struct {
     gain: f64,
 
     const Self = @This();
+    const PrepareContext = GenNode.PrepareContext;
+    const ProcessContext = GenNode.ProcessContext;
 
-    pub fn process(self: *Self, input: []f64, output: []f64) void {
-        for (input, 0..) |value, i| {
-            output[i] = value * self.gain;
+    pub fn process(self: *Self, ctx: ProcessContext) void {
+        for (0..ctx.buffer.n_frames) |frame_index| {
+            const sample = ctx.buffer.readSample(0, frame_index);
+            ctx.buffer.writeSample(0, frame_index, sample * self.gain);
         }
     }
+
+    pub fn prepare(_: *Self, _: PrepareContext) void {}
 };
 
 test "Test Node Initialization" {
@@ -117,7 +127,6 @@ test "Test Node Initialization" {
     var node = try GenNode.createNode(allocator, GainNode{ .gain = 1.0 });
     defer node.destroy();
 
-    // Ensure initial status is set correctly
     try std.testing.expectEqual(node.nodeStatus(), .init);
 }
 
@@ -128,13 +137,22 @@ test "Test Processing Functionality" {
     defer node.destroy();
 
     var input = [_]f64{ 1.0, 2.0, 3.0 };
-    var output = [_]f64{ 0.0, 0.0, 0.0 };
+    var buffer = try audio_buffer.ChannelView(f64).init(&input, 1, .interleaved);
 
-    node.process(&input, &output);
+    const ctx = GenNode.ProcessContext{
+        .buffer = &buffer,
+    };
 
-    try std.testing.expectEqual(output[0], 2.0);
-    try std.testing.expectEqual(output[1], 4.0);
-    try std.testing.expectEqual(output[2], 6.0);
+    node.process(ctx);
+
+    // modify the input buffer in place
+    try std.testing.expectEqual(input[0], 2.0);
+    try std.testing.expectEqual(input[1], 4.0);
+    try std.testing.expectEqual(input[2], 6.0);
+
+    try std.testing.expectEqual(buffer.readSample(0, 0), 2.0);
+    try std.testing.expectEqual(buffer.readSample(0, 1), 4.0);
+    try std.testing.expectEqual(buffer.readSample(0, 2), 6.0);
 }
 
 test "Test Atomic Node Status Transitions" {
@@ -150,25 +168,4 @@ test "Test Atomic Node Status Transitions" {
 
     node.setStatus(.processed);
     try std.testing.expectEqual(node.nodeStatus(), .processed);
-}
-
-test "Test Edge Case: Zero-Length Arrays" {
-    const allocator = std.testing.allocator;
-
-    var node = try GenNode.createNode(allocator, GainNode{ .gain = 3.0 });
-    defer node.destroy();
-
-    const empty_input: []f64 = &[_]f64{};
-    const empty_output: []f64 = &[_]f64{};
-
-    node.process(empty_input, empty_output);
-    try std.testing.expectEqual(empty_output.len, 0);
-}
-
-test "Test Memory Management" {
-    const allocator = std.testing.allocator;
-
-    var node = try GenNode.createNode(allocator, GainNode{ .gain = 1.0 });
-
-    defer node.destroy();
 }

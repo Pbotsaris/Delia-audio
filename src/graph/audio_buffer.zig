@@ -15,16 +15,20 @@ pub fn ChannelView(comptime T: type) type {
 
         const ChannelViewError = error{
             invalid_channel_count,
-            invalid_sample_index,
+            empty_buffer,
         };
 
         buffer: []T,
-        // used when buffer is interleaved
         n_channels: usize,
         n_frames: usize,
         access: AccessPattern,
 
         pub fn init(buffer: []T, n_channels: usize, access: AccessPattern) !Self {
+            // empty buffers are not allowed
+            if (buffer.len == 0) {
+                return ChannelViewError.empty_buffer;
+            }
+
             if (buffer.len % n_channels != 0) {
                 return ChannelViewError.invalid_channel_count;
             }
@@ -71,6 +75,11 @@ test "ChannelView - initialization with valid parameters" {
 test "ChannelView - initialization with invalid channel count" {
     var buffer = [_]f32{ 1.0, 2.0, 3.0 }; // 3 samples can't be evenly divided into 2 channels
     try expectError(ChannelView(f32).ChannelViewError.invalid_channel_count, ChannelView(f32).init(&buffer, 2, .interleaved));
+}
+
+test "ChannelView - initialization with Empty buffer" {
+    var buffer = [_]f32{};
+    try expectError(ChannelView(f32).ChannelViewError.empty_buffer, ChannelView(f32).init(&buffer, 0, .interleaved));
 }
 
 test "ChannelView - interleaved read/write f32" {
