@@ -224,40 +224,76 @@ const GainNode = struct {
     }
 };
 
-test "toplogical test" {
+test "Graph: connect nodes validation" {
     const allocator = std.testing.allocator;
     var graph = Graph(f64).init(allocator, .{});
+    defer graph.deinit();
 
     const node_a = try graph.addNode(GainNode{ .gain = 0.2 });
     const node_b = try graph.addNode(GainNode{ .gain = 0.5 });
-    const node_c = try graph.addNode(GainNode{ .gain = 0.89 });
-    const node_d = try graph.addNode(GainNode{ .gain = 0.90 });
-    const node_e = try graph.addNode(GainNode{ .gain = 0.92 });
-
     try node_a.connect(node_b);
-    try node_b.connect(node_c);
 
-    try node_a.connect(node_d);
-    try node_d.connect(node_e);
-
-    var res = try graph.topologicalSortAlloc(allocator);
-
-    try graph.debugGraph("graph.dot");
-
-    res.deinit();
-    graph.deinit();
+    try std.testing.expectEqual(graph.edges.items.len, 1);
+    try std.testing.expectEqual(graph.edges.items[0].from, node_a.index);
+    try std.testing.expectEqual(graph.edges.items[0].to, node_b.index);
 }
 
-test "Graph: Create nodes" {
+test "Graph: topological sort validation" {
     const allocator = std.testing.allocator;
     var graph = Graph(f64).init(allocator, .{});
+    defer graph.deinit();
 
-    var node_a = try graph.addNode(GainNode{ .gain = 0.2 });
+    const node_a = try graph.addNode(GainNode{ .gain = 0.2 });
     const node_b = try graph.addNode(GainNode{ .gain = 0.5 });
-    const node_c = try graph.addNode(GainNode{ .gain = 0.89 });
+    const node_c = try graph.addNode(GainNode{ .gain = 0.3 });
 
     try node_a.connect(node_b);
     try node_b.connect(node_c);
 
-    graph.deinit();
+    var result = try graph.topologicalSortAlloc(allocator);
+    defer result.deinit();
+
+    // Verify correct order
+    try std.testing.expectEqual(result.nodes.items(.index)[0], node_a.index);
+    try std.testing.expectEqual(result.nodes.items(.index)[1], node_b.index);
+    try std.testing.expectEqual(result.nodes.items(.index)[2], node_c.index);
+}
+
+test "Graph: detect cycles" {
+    const allocator = std.testing.allocator;
+    var graph = Graph(f64).init(allocator, .{});
+    defer graph.deinit();
+
+    const node_a = try graph.addNode(GainNode{ .gain = 0.2 });
+    const node_b = try graph.addNode(GainNode{ .gain = 0.5 });
+
+    try node_a.connect(node_b);
+    try node_b.connect(node_a);
+
+    try std.testing.expectError(Graph(f64).GraphError.CycleDetected, graph.topologicalSortAlloc(allocator));
+}
+
+test "Graph: complex DAG" {
+    const allocator = std.testing.allocator;
+    var graph = Graph(f64).init(allocator, .{});
+    defer graph.deinit();
+
+    const nodes = [_]Graph(f64).NodeHandle{
+        try graph.addNode(GainNode{ .gain = 0.1 }),
+        try graph.addNode(GainNode{ .gain = 0.2 }),
+        try graph.addNode(GainNode{ .gain = 0.3 }),
+        try graph.addNode(GainNode{ .gain = 0.4 }),
+    };
+
+    try nodes[0].connect(nodes[1]);
+    try nodes[0].connect(nodes[2]);
+    try nodes[1].connect(nodes[3]);
+    try nodes[2].connect(nodes[3]);
+
+    var result = try graph.topologicalSortAlloc(allocator);
+    defer result.deinit();
+
+    // Verify node 0 comes first and node 3 comes last
+    try std.testing.expectEqual(result.nodes.items(.index)[0], nodes[0].index);
+    try std.testing.expectEqual(result.nodes.items(.index)[3], nodes[3].index);
 }
