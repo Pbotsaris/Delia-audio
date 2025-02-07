@@ -117,7 +117,7 @@ pub fn Graph(comptime T: type) type {
             try self.exportDot(writer);
         }
 
-        fn topologicalSortAlloc(self: Self, allocator: std.mem.Allocator) !ExecutionQueue {
+        pub fn topologicalSortAlloc(self: Self, allocator: std.mem.Allocator) !ExecutionQueue {
             const node_count = self.nodes.items.len;
 
             var results = try ExecutionQueue.init(allocator, node_count);
@@ -218,10 +218,11 @@ const GainNode = struct {
     const Self = @This();
     const PrepareContext = nodes.interface.GenericNode(f64).PrepareContext;
     const ProcessContext = nodes.interface.GenericNode(f64).ProcessContext;
+    const Error = nodes.interface.NodeError;
 
     // for testing, no need to implement
     pub fn process(_: *Self, _: ProcessContext) void {}
-    pub fn prepare(_: *Self, _: PrepareContext) void {}
+    pub fn prepare(_: *Self, _: PrepareContext) Error!void {}
 };
 
 test "Graph: connect nodes validation" {

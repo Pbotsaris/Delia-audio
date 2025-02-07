@@ -11,7 +11,7 @@ pub const BufferSize = enum(usize) {
     buf_1024 = 1024,
     buf_2048 = 2048,
 
-    inline fn toFloat(self: Self, T: type) T {
+    pub inline fn toFloat(self: Self, T: type) T {
         return @floatFromInt(@as(usize, @intFromEnum(self)));
     }
 };
@@ -25,7 +25,7 @@ pub const BlockSize = enum(usize) {
     blk_512 = 512,
     blk_1024 = 1024,
     blk_2048 = 2048,
-    inline fn toFloat(self: Self, T: type) T {
+    pub inline fn toFloat(self: Self, T: type) T {
         return @floatFromInt(@as(usize, @intFromEnum(self)));
     }
 };
@@ -38,7 +38,7 @@ pub const SampleRate = enum(usize) {
     sr_96000 = 96000,
     sr_192000 = 192000,
 
-    inline fn toFloat(self: Self, T: type) T {
+    pub inline fn toFloat(self: Self, T: type) T {
         return @floatFromInt(@as(usize, @intFromEnum(self)));
     }
 };

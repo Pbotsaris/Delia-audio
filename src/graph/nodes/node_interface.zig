@@ -1,10 +1,15 @@
 const std = @import("std");
 const audio_buffer = @import("../audio_buffer.zig");
+const specs = @import("../../audio_specs.zig");
 
 pub const NodeStatus = enum(u8) {
     init,
     ready,
     processed,
+};
+
+pub const NodeError = error{
+    allocation_error,
 };
 
 pub fn GenericNode(comptime T: type) type {
@@ -16,7 +21,7 @@ pub fn GenericNode(comptime T: type) type {
         const Self = @This();
 
         pub const PrepareContext = struct {
-            block_size: usize,
+            block_size: specs.BlockSize,
             sample_rate: T,
         };
 
@@ -25,6 +30,7 @@ pub fn GenericNode(comptime T: type) type {
         };
 
         pub const VTable = struct {
+            prepare: *const fn (*anyopaque, PrepareContext) NodeError!void,
             process: *const fn (*anyopaque, ProcessContext) void,
             destroy: *const fn (*anyopaque, std.mem.Allocator) void,
         };
@@ -60,6 +66,11 @@ pub fn GenericNode(comptime T: type) type {
             }
 
             const gen = struct {
+                fn prepareFn(ctx: *anyopaque, prepare_ctx: PrepareContext) NodeError!void {
+                    const self = @as(PtrType, @ptrCast(@alignCast(ctx)));
+                    try self.prepare(prepare_ctx);
+                }
+
                 fn processFn(ctx: *anyopaque, process_ctx: ProcessContext) void {
                     const self = @as(PtrType, @ptrCast(@alignCast(ctx)));
                     self.process(process_ctx);
@@ -73,6 +84,7 @@ pub fn GenericNode(comptime T: type) type {
                 const vtable: VTable = .{
                     .process = processFn,
                     .destroy = destroyFn,
+                    .prepare = prepareFn,
                 };
             };
 
@@ -82,6 +94,10 @@ pub fn GenericNode(comptime T: type) type {
                 .allocator = allocator,
                 .status = std.atomic.Value(NodeStatus).init(.init),
             };
+        }
+
+        pub inline fn prepare(self: Self, ctx: PrepareContext) NodeError!void {
+            try self.vtable.prepare(self.ptr, ctx);
         }
 
         pub inline fn process(self: Self, ctx: ProcessContext) void {
@@ -118,7 +134,7 @@ const GainNode = struct {
         }
     }
 
-    pub fn prepare(_: *Self, _: PrepareContext) void {}
+    pub fn prepare(_: *Self, _: PrepareContext) NodeError!void {}
 };
 
 test "Test Node Initialization" {

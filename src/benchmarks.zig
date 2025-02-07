@@ -94,7 +94,7 @@ pub fn main() !void {
     try bench.add("fft non power-of-2", fftNonPowerOfTwo, .{});
     try bench.add("fft static", fftStatic, .{});
     try bench.add("sin", sineWave, .{});
-    try bench.add("sin smpl by sampl", sineWaveSampleBySample, .{});
+    try bench.add("sin smpl by smpl", sineWaveSampleBySample, .{});
     try bench.add("vec sine", vectorizedSineWave, .{});
     try bench.run(stdout);
 }

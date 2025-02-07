@@ -10,6 +10,7 @@ pub fn SineNode(comptime T: type) type {
         const Self = @This();
         const PrepareContext = GenericNode.PrepareContext;
         const ProcessContext = GenericNode.ProcessContext;
+        const Error = node_interface.NodeError;
 
         pub fn init(freq: T, amp: T, sr: T) Self {
             return .{
@@ -27,7 +28,7 @@ pub fn SineNode(comptime T: type) type {
             }
         }
 
-        pub fn prepare(self: *Self, ctx: PrepareContext) void {
+        pub fn prepare(self: *Self, ctx: PrepareContext) Error!void {
             self.wave.setSampleRate(ctx.sample_rate);
         }
     };
