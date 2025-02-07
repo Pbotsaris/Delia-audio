@@ -22,9 +22,12 @@ pub fn GenericNode(comptime T: type) type {
 
         pub const PrepareContext = struct {
             block_size: specs.BlockSize,
+            n_channels: usize,
             sample_rate: T,
+            access_pattern: audio_buffer.AccessPattern,
         };
 
+        // ProcessContext does not own the buffer
         pub const ProcessContext = struct {
             buffer: *audio_buffer.ChannelView(T),
         };
@@ -96,12 +99,16 @@ pub fn GenericNode(comptime T: type) type {
             };
         }
 
-        pub inline fn prepare(self: Self, ctx: PrepareContext) NodeError!void {
+        pub inline fn prepare(self: *Self, ctx: PrepareContext) NodeError!void {
             try self.vtable.prepare(self.ptr, ctx);
+
+            self.setStatus(.ready);
         }
 
-        pub inline fn process(self: Self, ctx: ProcessContext) void {
+        pub inline fn process(self: *Self, ctx: ProcessContext) void {
             self.vtable.process(self.ptr, ctx);
+
+            self.setStatus(.processed);
         }
 
         pub inline fn destroy(self: *Self) void {
@@ -151,9 +158,14 @@ test "Test Processing Functionality" {
 
     var node = try GenNode.createNode(allocator, GainNode{ .gain = 2.0 });
     defer node.destroy();
-    var input = [_]f64{ 1.0, 2.0, 3.0 };
+    const input = [_]f64{ 1.0, 2.0, 3.0 };
 
-    var buffer = try audio_buffer.ChannelView(f64).init(&input, 1, .interleaved);
+    var buffer = try audio_buffer.ChannelView(f64).init(allocator, 1, .blk_64, .interleaved);
+    defer buffer.deinit();
+
+    buffer.writeSample(0, 0, input[0]);
+    buffer.writeSample(0, 1, input[1]);
+    buffer.writeSample(0, 2, input[2]);
 
     const ctx = GenNode.ProcessContext{
         .buffer = &buffer,
@@ -161,14 +173,9 @@ test "Test Processing Functionality" {
 
     node.process(ctx);
 
-    // modify the input buffer in place
-    try std.testing.expectEqual(input[0], 2.0);
-    try std.testing.expectEqual(input[1], 4.0);
-    try std.testing.expectEqual(input[2], 6.0);
-
-    try std.testing.expectEqual(buffer.readSample(0, 0), 2.0);
-    try std.testing.expectEqual(buffer.readSample(0, 1), 4.0);
-    try std.testing.expectEqual(buffer.readSample(0, 2), 6.0);
+    try std.testing.expectEqual(2.0, buffer.readSample(0, 0));
+    try std.testing.expectEqual(4.0, buffer.readSample(0, 1));
+    try std.testing.expectEqual(6.0, buffer.readSample(0, 2));
 }
 
 test "Test Atomic Node Status Transitions" {

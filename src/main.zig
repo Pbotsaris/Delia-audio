@@ -29,12 +29,19 @@ pub fn main() !void {
     var scheduler = graph.scheduler.Scheduler(f32).init(allocator);
     defer scheduler.deinit();
 
-    scheduler.build_graph(.sr_44100) catch |err| {
+    const sr: audio_specs.SampleRate = .sr_44100;
+
+    scheduler.build_graph(sr) catch |err| {
         log.err("Failed to build graph: {any}", .{err});
         return;
     };
 
-    scheduler.prepare(.sr_44100, .blk_64) catch |err| {
+    scheduler.prepare(.{
+        .n_channels = 2,
+        .block_size = .blk_256,
+        .sample_rate = sr.toFloat(f32),
+        .access_pattern = .interleaved,
+    }) catch |err| {
         log.err("Failed to prepare scheduler: {any}", .{err});
         return;
     };

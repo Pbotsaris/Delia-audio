@@ -1,6 +1,7 @@
 const std = @import("std");
+const specs = @import("../audio_specs.zig");
 
-const AccessPattern = enum {
+pub const AccessPattern = enum {
     interleaved,
     non_interleaved,
 };
@@ -13,33 +14,21 @@ pub fn ChannelView(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        const ChannelViewError = error{
-            invalid_channel_count,
-            empty_buffer,
-        };
-
         buffer: []T,
         n_channels: usize,
         n_frames: usize,
         access: AccessPattern,
+        allocator: std.mem.Allocator,
 
-        pub fn init(buffer: []T, n_channels: usize, access: AccessPattern) !Self {
-            // empty buffers are not allowed
-            if (buffer.len == 0) {
-                return ChannelViewError.empty_buffer;
-            }
-
-            if (buffer.len % n_channels != 0) {
-                return ChannelViewError.invalid_channel_count;
-            }
-
-            const n_frames = @divFloor(buffer.len, n_channels);
+        pub fn init(allocator: std.mem.Allocator, n_channels: usize, block_size: specs.BlockSize, access: AccessPattern) !Self {
+            const buffer_len = @as(usize, @intFromEnum(block_size) * n_channels);
 
             return Self{
-                .buffer = buffer,
-                .n_frames = n_frames,
+                .buffer = try allocator.alloc(T, buffer_len),
+                .n_frames = @intFromEnum(block_size),
                 .n_channels = n_channels,
                 .access = access,
+                .allocator = allocator,
             };
         }
 
@@ -57,105 +46,125 @@ pub fn ChannelView(comptime T: type) type {
                 .non_interleaved => self.buffer[at_channel * self.n_frames + at_frame] = sample,
             }
         }
+
+        pub fn deinit(self: *Self) void {
+            self.allocator.free(self.buffer);
+        }
     };
 }
 
 const expect = std.testing.expect;
-const expectEqual = std.testing.expectEqual;
 const expectError = std.testing.expectError;
+const expectEqual = std.testing.expectEqual;
 
 test "ChannelView - initialization with valid parameters" {
-    var buffer = [_]f32{ 1.0, 2.0, 3.0, 4.0 };
-    const view = try ChannelView(f32).init(&buffer, 2, .interleaved);
+    const allocator = std.testing.allocator;
+
+    var view = try ChannelView(f32).init(allocator, 2, .blk_128, .interleaved);
+    defer view.deinit();
+
     try expectEqual(view.n_channels, 2);
-    try expectEqual(view.n_frames, 2);
+    try expectEqual(view.n_frames, 128);
     try expectEqual(view.access, .interleaved);
-}
-
-test "ChannelView - initialization with invalid channel count" {
-    var buffer = [_]f32{ 1.0, 2.0, 3.0 }; // 3 samples can't be evenly divided into 2 channels
-    try expectError(ChannelView(f32).ChannelViewError.invalid_channel_count, ChannelView(f32).init(&buffer, 2, .interleaved));
-}
-
-test "ChannelView - initialization with Empty buffer" {
-    var buffer = [_]f32{};
-    try expectError(ChannelView(f32).ChannelViewError.empty_buffer, ChannelView(f32).init(&buffer, 0, .interleaved));
+    try expectEqual(view.buffer.len, 256);
 }
 
 test "ChannelView - interleaved read/write f32" {
-    var buffer = [_]f32{ 1.0, 2.0, 3.0, 4.0 }; // [ch1, ch2, ch1, ch2]
-    var view = try ChannelView(f32).init(&buffer, 2, .interleaved);
+    const allocator = std.testing.allocator;
 
-    // Test reading
-    try expectEqual(view.readSample(0, 0), 1.0); // First sample, first channel
-    try expectEqual(view.readSample(1, 0), 2.0); // First sample, second channel
-    try expectEqual(view.readSample(0, 1), 3.0); // Second sample, first channel
-    try expectEqual(view.readSample(1, 1), 4.0); // Second sample, second channel
+    var view = try ChannelView(f32).init(allocator, 2, .blk_256, .interleaved);
+    defer view.deinit();
 
-    // Test writing
-    view.writeSample(0, 0, 5.0);
-    view.writeSample(1, 1, 6.0);
-    try expectEqual(buffer[0], 5.0);
-    try expectEqual(buffer[3], 6.0);
+    try expectEqual(view.buffer.len, 512);
+
+    // Initialize samples
+    view.writeSample(0, 0, 1.0);
+    view.writeSample(1, 0, 2.0);
+    view.writeSample(0, 1, 3.0);
+    view.writeSample(1, 1, 4.0);
+
+    // Verify values
+    try expectEqual(view.readSample(0, 0), 1.0);
+    try expectEqual(view.readSample(1, 0), 2.0);
+    try expectEqual(view.readSample(0, 1), 3.0);
+    try expectEqual(view.readSample(1, 1), 4.0);
 }
 
 test "ChannelView - non-interleaved read/write f32" {
-    var buffer = [_]f32{ 1.0, 2.0, 3.0, 4.0 }; // [ch1_frame1, ch1_frame2, ch2_frame1, ch2_frame2]
-    var view = try ChannelView(f32).init(&buffer, 2, .non_interleaved);
+    const allocator = std.testing.allocator;
 
-    // Test reading
-    try expectEqual(view.readSample(0, 0), 1.0); // First channel, first frame
-    try expectEqual(view.readSample(0, 1), 2.0); // First channel, second frame
-    try expectEqual(view.readSample(1, 0), 3.0); // Second channel, first frame
-    try expectEqual(view.readSample(1, 1), 4.0); // Second channel, second frame
+    var view = try ChannelView(f32).init(allocator, 2, .blk_1024, .non_interleaved);
+    defer view.deinit();
 
-    // Test writing
-    view.writeSample(0, 0, 5.0);
-    view.writeSample(1, 1, 6.0);
-    try expectEqual(buffer[0], 5.0);
-    try expectEqual(buffer[3], 6.0);
-}
-test "ChannelView - f64 support" {
-    var buffer = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
-    var view = try ChannelView(f64).init(&buffer, 2, .interleaved);
+    try expectEqual(view.buffer.len, 2048);
+
+    view.writeSample(0, 0, 1.0);
+    view.writeSample(1, 0, 2.0);
+    view.writeSample(0, 1, 3.0);
+    view.writeSample(1, 1, 4.0);
 
     try expectEqual(view.readSample(0, 0), 1.0);
+    try expectEqual(view.readSample(1, 0), 2.0);
+    try expectEqual(view.readSample(0, 1), 3.0);
+    try expectEqual(view.readSample(1, 1), 4.0);
+}
+
+test "ChannelView - f64 support" {
+    const allocator = std.testing.allocator;
+
+    var view = try ChannelView(f64).init(allocator, 2, .blk_2048, .interleaved);
+    defer view.deinit();
+
+    view.writeSample(0, 0, 1.0);
+    try expectEqual(view.readSample(0, 0), 1.0);
+
     view.writeSample(0, 0, 5.0);
-    try expectEqual(buffer[0], 5.0);
+    try expectEqual(view.readSample(0, 0), 5.0);
 }
 
 test "ChannelView - single channel" {
-    var buffer = [_]f32{ 1.0, 2.0, 3.0 };
-    var view = try ChannelView(f32).init(&buffer, 1, .interleaved);
+    const allocator = std.testing.allocator;
 
-    try expectEqual(view.n_channels, 1);
-    try expectEqual(view.n_frames, 3);
+    var view = try ChannelView(f32).init(allocator, 1, .blk_256, .interleaved);
+    defer view.deinit();
+
+    view.writeSample(0, 0, 1.0);
+    view.writeSample(0, 1, 2.0);
+    view.writeSample(0, 2, 3.0);
+
     try expectEqual(view.readSample(0, 1), 2.0);
 }
 
 test "ChannelView - large buffer operations" {
-    var buffer: [1024]f32 = undefined;
+    const allocator = std.testing.allocator;
 
-    for (0..buffer.len) |i| {
-        buffer[i] = @as(f32, @floatFromInt(i));
-    }
+    var view = try ChannelView(f32).init(allocator, 4, .blk_256, .interleaved);
+    defer view.deinit();
 
-    var view = try ChannelView(f32).init(&buffer, 4, .interleaved);
     try expectEqual(view.n_frames, 256);
 
+    // Initialize the buffer
+    for (0..view.buffer.len) |i| {
+        view.buffer[i] = @as(f32, @floatFromInt(i));
+    }
+
+    // Test read/write
     try expectEqual(view.readSample(0, 0), 0.0);
     try expectEqual(view.readSample(3, 0), 3.0);
     try expectEqual(view.readSample(0, 1), 4.0);
 
     view.writeSample(0, 0, 100.0);
     view.writeSample(3, 255, 999.0);
-    try expectEqual(buffer[0], 100.0);
-    try expectEqual(buffer[1023], 999.0);
+
+    try expectEqual(view.buffer[0], 100.0);
+    try expectEqual(view.buffer[1023], 999.0);
 }
 
 test "ChannelView - non-interleaved large buffer" {
-    var buffer: [1024]f32 = undefined;
-    var view = try ChannelView(f32).init(&buffer, 4, .non_interleaved);
+    const allocator = std.testing.allocator;
+
+    var view = try ChannelView(f32).init(allocator, 4, .blk_256, .non_interleaved);
+    defer view.deinit();
 
     // Write test pattern
     for (0..4) |channel| {
@@ -164,7 +173,7 @@ test "ChannelView - non-interleaved large buffer" {
         }
     }
 
-    // Verify pattern
+    // Verify the pattern
     for (0..4) |channel| {
         for (0..256) |frame| {
             const expected = @as(f32, @floatFromInt(channel * 256 + frame));
