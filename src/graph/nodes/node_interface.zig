@@ -135,8 +135,8 @@ test "Test Processing Functionality" {
 
     var node = try GenNode.createNode(allocator, GainNode{ .gain = 2.0 });
     defer node.destroy();
-
     var input = [_]f64{ 1.0, 2.0, 3.0 };
+
     var buffer = try audio_buffer.ChannelView(f64).init(&input, 1, .interleaved);
 
     const ctx = GenNode.ProcessContext{

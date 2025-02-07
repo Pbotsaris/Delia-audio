@@ -64,6 +64,25 @@ fn sineWave(_: std.mem.Allocator) void {
     return;
 }
 
+fn sineWaveSampleBySample(_: std.mem.Allocator) void {
+    var w = dsp.waves.Wave(f32).init(400.0, 1.0, 44100.0);
+    var buffer: [4096]f32 = undefined;
+
+    for (0..buffer.len) |i| {
+        buffer[i] = w.sineSample();
+    }
+
+    return;
+}
+
+fn vectorizedSineWave(_: std.mem.Allocator) void {
+    var w = dsp.waves.VectorizedWave(f32).init(400.0, 1.0, 44100.0);
+    var buffer: [4096]f32 = undefined;
+
+    const sine = w.sine(&buffer);
+    _ = sine;
+}
+
 pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
     const allocator = std.heap.page_allocator;
@@ -74,6 +93,8 @@ pub fn main() !void {
     try bench.add("fft power-of-2", fftPowerOfTwo, .{});
     try bench.add("fft non power-of-2", fftNonPowerOfTwo, .{});
     try bench.add("fft static", fftStatic, .{});
-    try bench.add("sine wave", sineWave, .{});
+    try bench.add("sin", sineWave, .{});
+    try bench.add("sin smpl by sampl", sineWaveSampleBySample, .{});
+    try bench.add("vec sine", vectorizedSineWave, .{});
     try bench.run(stdout);
 }
