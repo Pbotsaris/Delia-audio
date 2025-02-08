@@ -33,6 +33,7 @@ pub fn GenericNode(comptime T: type) type {
         };
 
         pub const VTable = struct {
+            name: *const fn (*anyopaque) []const u8,
             prepare: *const fn (*anyopaque, PrepareContext) NodeError!void,
             process: *const fn (*anyopaque, ProcessContext) void,
             destroy: *const fn (*anyopaque, std.mem.Allocator) void,
@@ -84,10 +85,16 @@ pub fn GenericNode(comptime T: type) type {
                     alloc.destroy(self);
                 }
 
+                fn nameFn(ctx: *anyopaque) []const u8 {
+                    const self = @as(PtrType, @ptrCast(@alignCast(ctx)));
+                    return self.name();
+                }
+
                 const vtable: VTable = .{
                     .process = processFn,
                     .destroy = destroyFn,
                     .prepare = prepareFn,
+                    .name = nameFn,
                 };
             };
 
@@ -97,6 +104,10 @@ pub fn GenericNode(comptime T: type) type {
                 .allocator = allocator,
                 .status = std.atomic.Value(NodeStatus).init(.init),
             };
+        }
+
+        pub fn name(self: Self) []const u8 {
+            return self.vtable.name(self.ptr);
         }
 
         pub inline fn prepare(self: *Self, ctx: PrepareContext) NodeError!void {
@@ -134,6 +145,10 @@ const GainNode = struct {
     const PrepareContext = GenNode.PrepareContext;
     const ProcessContext = GenNode.ProcessContext;
 
+    pub fn name() []const u8 {
+        return "GainNode";
+    }
+
     pub fn process(self: *Self, ctx: ProcessContext) void {
         for (0..ctx.buffer.block_size) |frame_index| {
             const sample = ctx.buffer.readSample(0, frame_index);
@@ -162,8 +177,8 @@ test "Test Processing Functionality" {
 
     var buffer = try audio_buffer.ChannelView(f64).init(allocator, 1, .blk_64, .interleaved);
     defer buffer.deinit();
-
     buffer.writeSample(0, 0, input[0]);
+
     buffer.writeSample(0, 1, input[1]);
     buffer.writeSample(0, 2, input[2]);
 

@@ -18,6 +18,10 @@ pub fn SineNode(comptime T: type) type {
             };
         }
 
+        pub fn name(_: *Self) []const u8 {
+            return "SineNode";
+        }
+
         pub fn process(self: *Self, ctx: ProcessContext) void {
             for (0..ctx.buffer.block_size) |frame_index| {
                 const sample = self.wave.sineSample();

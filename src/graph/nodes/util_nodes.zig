@@ -1,4 +1,5 @@
 const node_interface = @import("node_interface.zig");
+const std = @import("std");
 
 pub fn GainNode(comptime T: type) type {
     if (T != f32 and T != f64) {
@@ -15,10 +16,16 @@ pub fn GainNode(comptime T: type) type {
         const ProcessContext = GenericNode.ProcessContext;
         const Error = node_interface.NodeError;
 
+        pub fn name(_: *Self) []const u8 {
+            return "GainNode";
+        }
+
         pub fn process(self: *Self, ctx: ProcessContext) void {
             for (0..ctx.buffer.block_size) |frame_index| {
-                const sample = ctx.buffer.readSample(0, frame_index);
-                ctx.buffer.writeSample(0, frame_index, sample * self.gain);
+                for (0..ctx.buffer.n_channels) |ch_index| {
+                    const sample = ctx.buffer.readSample(ch_index, frame_index);
+                    ctx.buffer.writeSample(ch_index, frame_index, sample * self.gain);
+                }
             }
         }
 

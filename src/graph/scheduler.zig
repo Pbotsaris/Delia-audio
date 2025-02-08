@@ -3,11 +3,6 @@ const graph = @import("graph.zig");
 const specs = @import("../audio_specs.zig");
 const audio_buffer = @import("audio_buffer.zig");
 
-pub const std_options = .{
-    .log_level = .debug,
-    .logFn = @import("../logging.zig").logFn,
-};
-
 const log = std.log.scoped(.graph);
 
 pub fn Scheduler(comptime T: type) type {
@@ -84,10 +79,10 @@ pub fn Scheduler(comptime T: type) type {
                 }
 
                 var node = self.audio_graph.nodes.items[node_index];
-                node.setStatus(.ready);
-
+                self.audio_graph.updateNodeStatus(node_index, .ready);
                 node.process(ctx);
-                node.setStatus(.processed);
+
+                self.audio_graph.updateNodeStatus(node_index, .processed);
             }
         }
 

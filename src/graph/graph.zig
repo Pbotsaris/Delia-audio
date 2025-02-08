@@ -109,6 +109,11 @@ pub fn Graph(comptime T: type) type {
             return .{ .index = index, .graph = self };
         }
 
+        // this may become a batch update operation
+        pub fn updateNodeStatus(self: *Self, index: usize, status: nodes.interface.NodeStatus) void {
+            self.nodes.items[index].status.store(status, .seq_cst);
+        }
+
         pub fn debugGraph(self: Self, path: []const u8) !void {
             var file = try std.fs.cwd().createFile(path, .{});
             defer file.close();
