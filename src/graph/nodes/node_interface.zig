@@ -145,7 +145,7 @@ const GainNode = struct {
     const PrepareContext = GenNode.PrepareContext;
     const ProcessContext = GenNode.ProcessContext;
 
-    pub fn name() []const u8 {
+    pub fn name(_: *Self) []const u8 {
         return "GainNode";
     }
 
@@ -175,7 +175,11 @@ test "Test Processing Functionality" {
     defer node.destroy();
     const input = [_]f64{ 1.0, 2.0, 3.0 };
 
-    var buffer = try audio_buffer.ChannelView(f64).init(allocator, 1, .blk_64, .interleaved);
+    var buffer = try audio_buffer.ChannelView(f64).init(allocator, .{
+        .n_channels = 1,
+        .block_size = .blk_64,
+        .access = .interleaved,
+    });
     defer buffer.deinit();
     buffer.writeSample(0, 0, input[0]);
 

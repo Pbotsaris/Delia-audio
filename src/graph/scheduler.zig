@@ -44,12 +44,11 @@ pub fn Scheduler(comptime T: type) type {
                 buffer.deinit();
             }
 
-            self.buffer = try audio_buffer.ChannelView(T).init(
-                self.allocator,
-                ctx.n_channels,
-                ctx.block_size,
-                ctx.access_pattern,
-            );
+            self.buffer = try audio_buffer.ChannelView(T).init(self.allocator, .{
+                .n_channels = ctx.n_channels,
+                .block_size = ctx.block_size,
+                .access = ctx.access_pattern,
+            });
 
             for (self.audio_graph.nodes.items) |*node| {
                 try node.prepare(ctx);

@@ -7,7 +7,7 @@ const c_alsa = @cImport({
 const settings = @import("settings.zig");
 const FormatType = @import("settings.zig").FormatType;
 const StreamType = @import("settings.zig").StreamType;
-const SampleRate = @import("settings.zig").SampleRate;
+const SampleRate = @import("../audio_specs.zig").SampleRate;
 const Channels = @import("settings.zig").ChannelCount;
 
 const log = std.log.scoped(.alsa);

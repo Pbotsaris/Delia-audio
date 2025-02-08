@@ -577,26 +577,6 @@ test "formats array contains correct values" {
     //   try expectEqual(c_alsa.SND_PCM_FORMAT_IEC958_SUBFRAME_LE, formats[40]);
 }
 
-test "sample_rates array contains correct values" {
-    try expectEqual(8000, sample_rates[0]);
-    try expectEqual(11025, sample_rates[1]);
-    try expectEqual(16000, sample_rates[2]);
-    try expectEqual(22050, sample_rates[3]);
-    try expectEqual(32000, sample_rates[4]);
-    try expectEqual(37800, sample_rates[5]);
-    try expectEqual(44056, sample_rates[6]);
-    try expectEqual(44100, sample_rates[7]);
-    try expectEqual(50000, sample_rates[8]);
-    try expectEqual(50400, sample_rates[9]);
-    try expectEqual(64000, sample_rates[10]);
-    try expectEqual(48000, sample_rates[11]);
-    try expectEqual(82000, sample_rates[12]);
-    try expectEqual(96000, sample_rates[13]);
-    try expectEqual(176400, sample_rates[14]);
-    try expectEqual(192000, sample_rates[15]);
-    try expectEqual(352800, sample_rates[16]);
-}
-
 test "channel_counts array contains correct values" {
     try expectEqual(1, channel_counts[0]);
     try expectEqual(2, channel_counts[1]);

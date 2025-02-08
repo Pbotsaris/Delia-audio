@@ -228,6 +228,10 @@ const GainNode = struct {
     // for testing, no need to implement
     pub fn process(_: *Self, _: ProcessContext) void {}
     pub fn prepare(_: *Self, _: PrepareContext) Error!void {}
+
+    pub fn name(_: *Self) []const u8 {
+        return "GainNode";
+    }
 };
 
 test "Graph: connect nodes validation" {
