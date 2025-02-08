@@ -1,4 +1,5 @@
 const std = @import("std");
+const SampleRate = @import("../audio_specs.zig").SampleRate;
 
 const c_alsa = @cImport({
     @cInclude("alsa/asoundlib.h");
@@ -53,28 +54,6 @@ pub const ChannelCount = enum(u32) {
     quad = 4,
     surround_5_1 = 6,
     surround_7_1 = 8,
-};
-
-// https://en.wikipedia.org/wiki/Sampling_(signal_processing)
-// ommting incredibly high sample rates
-pub const SampleRate = enum(u32) {
-    sr_8khz = 8000,
-    sr_11khz = 11025,
-    sr_16khz = 16000,
-    sr_22khz = 22050,
-    sr_32khz = 32000, // miniDV isoterical sample rate
-    sr_37khz = 37800, // CD-XA audio
-    sr_44k56hz = 44056, // NTSC color subcarrier
-    sr_44k100hz = 44100,
-    sr_50khz = 50000,
-    sr_50k400hz = 50400, // DAT audio
-    sr_64khz = 64000, // very unconventional
-    sr_48khz = 48000,
-    sr_82khz = 82000,
-    sr_96khz = 96000,
-    sr_176khz = 176400, // HDCD recorders. 4x CD audio
-    sr_192khz = 192000,
-    sr_352khz = 352800,
 };
 
 /// interleaved channels     [L1 R1 L2 R2 L3 R3 3R...]

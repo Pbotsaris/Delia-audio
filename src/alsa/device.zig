@@ -26,14 +26,14 @@ pub const FormatType = @import("settings.zig").FormatType;
 pub const AccessType = @import("settings.zig").AccessType;
 pub const StreamType = @import("settings.zig").StreamType;
 pub const Strategy = @import("settings.zig").Strategy;
-pub const SampleRate = @import("settings.zig").SampleRate;
+pub const SampleRate = @import("../audio_specs.zig").SampleRate;
 pub const ChannelCount = @import("settings.zig").ChannelCount;
 pub const Mode = @import("settings.zig").Mode;
 pub const StartThreshold = @import("settings.zig").StartThreshold;
 const GenericAudioData = @import("audio_data.zig").GenericAudioData;
 
 const DeviceOptions = struct {
-    sample_rate: SampleRate = SampleRate.sr_44k100hz,
+    sample_rate: SampleRate = SampleRate.sr_44100,
     channels: ChannelCount = ChannelCount.stereo,
     stream_type: StreamType = StreamType.playback,
     ident: [:0]const u8 = "default",
@@ -76,7 +76,7 @@ pub const AudioLoopError = error{
     audio_buffer_nonalignment,
 };
 
-pub fn GenericDevice(comptime format_type: FormatType) type {
+pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
     const T = format_type.ToType();
 
     return struct {
@@ -96,7 +96,8 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
         // defined at compile time for this device type
         pub const FORMAT_TYPE = format_type;
 
-        const AudioLoop = GenericAudioLoop(format_type);
+        const AudioLoop = GenericAudioLoop(format_type, ContextType);
+        pub const AudioCallback = AudioLoop.AudioCallback();
 
         /// Pointer to the PCM device handle.
         pcm_handle: ?*c_alsa.snd_pcm_t = null,
@@ -201,7 +202,7 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
         pub fn init(opts: DeviceOptions) DeviceHardwareError!Self {
             var pcm_handle: ?*c_alsa.snd_pcm_t = null;
             var params: ?*c_alsa.snd_pcm_hw_params_t = null;
-            var sample_rate: u32 = @intFromEnum(opts.sample_rate);
+            var sample_rate: u32 = @intCast(@intFromEnum(opts.sample_rate));
 
             // we are configuring the hardware to match the software buffer size and optimize latency
             var hardware_period_size: c_ulong = @intFromEnum(opts.buffer_size);
@@ -440,8 +441,8 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
             }
         }
 
-        pub fn start(self: Self, callback: AudioLoop.AudioCallback()) !void {
-            var audio_loop = AudioLoop.init(self, callback);
+        pub fn start(self: Self, ctx: *ContextType, callback: AudioCallback) !void {
+            var audio_loop = AudioLoop.init(self, ctx, callback);
 
             try audio_loop.start();
         }
@@ -450,12 +451,12 @@ pub fn GenericDevice(comptime format_type: FormatType) type {
 
 // Audio Loop Implementation
 
-fn GenericAudioLoop(comptime format_type: FormatType) type {
+fn GenericAudioLoop(comptime format_type: FormatType, ContextType: type) type {
     return struct {
         const Self = @This();
 
         pub fn AudioCallback() type {
-            return *const fn (*GenericAudioData(format_type)) void;
+            return *const fn (ctx: *ContextType, data: *GenericAudioData(format_type)) void;
         }
 
         // configuration for xrun recovery retries
@@ -468,14 +469,16 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
         const MAX_ZERO_TRANSFERS = 5;
         const BYTE_ALIGN = 8;
 
-        device: GenericDevice(format_type),
+        device: GenericDevice(format_type, ContextType),
         running: bool = false,
         callback: AudioCallback(),
+        ctx: *ContextType,
 
-        pub fn init(device: GenericDevice(format_type), callback: AudioCallback()) Self {
+        pub fn init(device: GenericDevice(format_type, ContextType), ctx: *ContextType, callback: AudioCallback()) Self {
             return .{
                 .device = device,
                 .callback = callback,
+                .ctx = ctx,
             };
         }
 
@@ -581,7 +584,7 @@ fn GenericAudioLoop(comptime format_type: FormatType) type {
                         self.device.audio_format,
                     );
 
-                    self.callback(&audio_data);
+                    self.callback(self.ctx, &audio_data);
 
                     const frames_actually_transfered =
                         c_alsa.snd_pcm_mmap_commit(self.device.pcm_handle, offset, expected_to_transfer);

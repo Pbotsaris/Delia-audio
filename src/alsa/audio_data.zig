@@ -13,10 +13,10 @@ pub const AudioDataError = error{
 };
 
 pub fn GenericAudioData(format_type: FormatType) type {
-    const T = format_type.ToType();
-
     return struct {
         const Self = @This();
+
+        const T = format_type.ToType();
 
         format: Format(T),
         channels: u32,
@@ -27,7 +27,7 @@ pub fn GenericAudioData(format_type: FormatType) type {
 
         // GenericAudioData will always expose sample as floats to the callers
         // We must be mindful of the precision loss, so for 24 and 32 bits audio, we use f64 precision.
-        fn FloatType() type {
+        pub fn FloatType() type {
             return switch (T) {
                 f64, u32, i32 => f64,
                 else => f32,
@@ -119,12 +119,16 @@ pub fn GenericAudioData(format_type: FormatType) type {
             self.position = 0;
         }
 
-        pub fn bufferSize(self: Self) usize {
+        pub fn bufferSizeInSamles(self: Self) usize {
             return @divFloor(self.data.len, @sizeOf(T));
         }
 
+        pub fn bufferSizeInFrames(self: Self) usize {
+            return @divFloor(self.bufferSizeInSamles(), self.channels);
+        }
+
         pub fn totalSampleCount(self: Self) usize {
-            return self.bufferSize() * self.channels;
+            return self.bufferSizeInSamles() * self.channels;
         }
 
         pub fn seek(self: *Self, sample_position: usize) !void {

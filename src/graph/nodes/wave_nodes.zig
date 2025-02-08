@@ -19,7 +19,7 @@ pub fn SineNode(comptime T: type) type {
         }
 
         pub fn process(self: *Self, ctx: ProcessContext) void {
-            for (0..ctx.buffer.n_frames) |frame_index| {
+            for (0..ctx.buffer.block_size) |frame_index| {
                 const sample = self.wave.sineSample();
 
                 for (0..ctx.buffer.n_channels) |ch_index| {

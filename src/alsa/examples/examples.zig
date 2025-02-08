@@ -2,28 +2,33 @@ const std = @import("std");
 const alsa = @import("../alsa.zig");
 const wave = @import("../../dsp/waves.zig");
 
+// TODO: Please check this code still runs
+
 // providing the format at comptime type will allow operation on device to be type safe
 const Device = alsa.device.GenericDevice(.signed_16bits_little_endian);
 
-var w = wave.Wave(f32).init(100.0, 0.2, 48000.0);
+const PlaybackContext = struct {
+    const Self = @This();
+    w: wave.Wave(f32).init(100.0, 0.2, 48000.0),
 
-fn callback(data: Device.AudioDataType()) void {
-    w.setSampleRate(@floatFromInt(data.sample_rate));
+    fn callback(self: *Self, data: Device.AudioDataType()) void {
+        self.w.setSampleRate(@floatFromInt(data.sample_rate));
 
-    for (0..data.totalSampleCount()) |_| {
-        const sample = w.sineSample();
+        for (0..data.totalSampleCount()) |_| {
+            const sample = self.w.sineSample();
 
-        for (0..data.channels) |_| {
-            data.writeSample(sample) catch {
-                return;
-            };
+            for (0..data.channels) |_| {
+                data.writeSample(sample) catch {
+                    return;
+                };
+            }
         }
     }
-}
+};
 
 pub fn playbackSineWave() void {
     var dev = Device.init(.{
-        .sample_rate = .sr_44k100hz,
+        .sample_rate = .sr_44100,
         .channels = .stereo,
         .stream_type = .playback,
         .buffer_size = .bz_512,
@@ -37,7 +42,9 @@ pub fn playbackSineWave() void {
         std.debug.print("Failed to prepare device: {any}", .{err});
     };
 
-    dev.start(callback) catch |err| {
+    var ctx = PlaybackContext{ .w = wave.Wave(f32).init(100.0, 0.2, 48000.0) };
+
+    dev.start(&ctx, ctx.callback) catch |err| {
         std.debug.print("Failed to start device: {any}", .{err});
     };
 }

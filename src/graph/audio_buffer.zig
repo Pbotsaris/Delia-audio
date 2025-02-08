@@ -16,7 +16,7 @@ pub fn ChannelView(comptime T: type) type {
 
         buffer: []T,
         n_channels: usize,
-        n_frames: usize,
+        block_size: usize,
         access: AccessPattern,
         allocator: std.mem.Allocator,
 
@@ -25,7 +25,7 @@ pub fn ChannelView(comptime T: type) type {
 
             return Self{
                 .buffer = try allocator.alloc(T, buffer_len),
-                .n_frames = @intFromEnum(block_size),
+                .block_size = @intFromEnum(block_size),
                 .n_channels = n_channels,
                 .access = access,
                 .allocator = allocator,
@@ -36,15 +36,23 @@ pub fn ChannelView(comptime T: type) type {
         pub inline fn readSample(self: Self, at_channel: usize, at_frame: usize) T {
             return switch (self.access) {
                 .interleaved => self.buffer[at_frame * self.n_channels + at_channel],
-                .non_interleaved => self.buffer[at_channel * self.n_frames + at_frame],
+                .non_interleaved => self.buffer[at_channel * self.block_size + at_frame],
             };
         }
 
         pub inline fn writeSample(self: *Self, at_channel: usize, at_frame: usize, sample: T) void {
             switch (self.access) {
                 .interleaved => self.buffer[at_frame * self.n_channels + at_channel] = sample,
-                .non_interleaved => self.buffer[at_channel * self.n_frames + at_frame] = sample,
+                .non_interleaved => self.buffer[at_channel * self.block_size + at_frame] = sample,
             }
+        }
+
+        pub inline fn totalSampleCount(self: Self) usize {
+            return self.buffer.len;
+        }
+
+        pub inline fn zero(self: *Self) void {
+            @memset(self.buffer, 0);
         }
 
         pub fn deinit(self: *Self) void {
@@ -64,7 +72,7 @@ test "ChannelView - initialization with valid parameters" {
     defer view.deinit();
 
     try expectEqual(view.n_channels, 2);
-    try expectEqual(view.n_frames, 128);
+    try expectEqual(view.block_size, 128);
     try expectEqual(view.access, .interleaved);
     try expectEqual(view.buffer.len, 256);
 }
@@ -141,7 +149,7 @@ test "ChannelView - large buffer operations" {
     var view = try ChannelView(f32).init(allocator, 4, .blk_256, .interleaved);
     defer view.deinit();
 
-    try expectEqual(view.n_frames, 256);
+    try expectEqual(view.block_size, 256);
 
     // Initialize the buffer
     for (0..view.buffer.len) |i| {
