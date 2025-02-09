@@ -22,7 +22,7 @@ pub fn Scheduler(comptime T: type) type {
 
         audio_graph: graph.Graph(T),
         allocator: std.mem.Allocator,
-        execution_queue: ?graph.ExecutionQueue = null,
+        topology_queue: ?graph.TopologyQueue = null,
         buffers: ?audio_buffer.UniformChannelViews(T) = null,
 
         pub fn init(allocator: std.mem.Allocator) Self {
@@ -46,49 +46,43 @@ pub fn Scheduler(comptime T: type) type {
 
             const queue = try self.audio_graph.topologicalSortAlloc(self.allocator);
 
-            if (self.execution_queue) |*q| {
+            if (self.topology_queue) |*q| {
                 q.deinit();
             }
 
-            self.execution_queue = queue;
+            self.topology_queue = queue;
 
-            const max_inputs: usize = blk: {
-                var max: usize = 0;
-                for (queue.nodes.items(.inputs)) |inputs| {
-                    if (inputs.len > max) max = @max(max, inputs.len);
-                }
-
-                break :blk max;
-            };
+            // assigns buffer index to each node and returns the number of buffers required
+            const n_views = try queue.analyzeBufferRequirementsAlloc();
 
             if (self.buffers) |*buffers| {
-                // we need more buffers, so we deinit the current ones. maybe could optimize this
-                if (buffers.opts.n_views < max_inputs) buffers.deinit()
+                // we already have enough buffers
+                if (buffers.opts.n_views >= n_views) buffers.deinit()
                 // we have enough buffers
                 else return;
             }
 
             self.buffers = try audio_buffer.UniformChannelViews(T).init(self.allocator, .{
-                .n_views = max_inputs,
+                .n_views = n_views,
                 .n_channels = ctx.n_channels,
                 .block_size = ctx.block_size,
                 .access = ctx.access_pattern,
             });
         }
 
+        pub fn process(_: *Self) !void {}
+
         //        pub fn process(self: *Self) !void {
         //            // WORK IN PROGRESS NOT READY TODO
         //            const queue = self.execution_queue orelse return;
         //            var buffers = self.buffers orelse return;
         //
-        //            var input_views: [buffers.n_views]audio_buffer.UnmanagedChannelView(T) = undefined;
-        //
         //            var processed_count: usize = 0;
         //            const total_nodes = queue.nodes.len;
         //
         //            while (processed_count < total_nodes) {
-        //                for (queue.nodes.items(.index), queue.nodes.items(.inputs)) |node_index, inputs| {
-        //                    var exec_node = self.audio_graph.nodes.items[node_index];
+        //                for (queue.nodes.slice()) |queue_node| {
+        //                    var exec_node = self.audio_graph.nodes.items[queue_node.];
         //
         //                    if (exec_node.nodeStatus() == .processed) continue;
         //
@@ -111,37 +105,29 @@ pub fn Scheduler(comptime T: type) type {
         //                }
         //            }
         //        }
-        //
-        pub fn process(self: *Self) !void {
-            const queue = self.execution_queue orelse return;
-            var buffers = self.buffers orelse return;
-            var buffer = buffers.getView(0);
 
-            const ctx = ProcessContext{ .buffer = &buffer };
+        // pub fn process(self: *Self) !void {
+        //     const queue = self.topology_queue orelse return;
+        //     var buffers = self.buffers orelse return;
+        //     var buffer = buffers.getView(0);
 
-            outer: for (queue.nodes.items(.index), queue.nodes.items(.inputs)) |node_index, inputs| {
-                for (inputs) |input_index| {
-                    const input_node = self.audio_graph.nodes.items[input_index];
-                    if (input_node.nodeStatus() != .processed) {
-                        continue :outer;
-                    }
-                }
+        //     const ctx = ProcessContext{ .buffer = &buffer };
 
-                var node = self.audio_graph.nodes.items[node_index];
-                self.audio_graph.updateNodeStatus(node_index, .ready);
-                node.process(ctx);
+        //     outer: for (queue.nodes.items(.graph_index), queue.nodes.items(.inputs)) |node_index, inputs| {
+        //         for (inputs) |input_index| {
+        //             const input_node = self.audio_graph.nodes.items[input_index];
+        //             if (input_node.nodeStatus() != .processed) {
+        //                 continue :outer;
+        //             }
+        //         }
 
-                self.audio_graph.updateNodeStatus(node_index, .processed);
-            }
-        }
+        //         var node = self.audio_graph.nodes.items[node_index];
+        //         self.audio_graph.updateNodeStatus(node_index, .ready);
+        //         node.process(ctx);
 
-        pub fn blockSize(self: Self) usize {
-            if (self.buffers) |buffer| {
-                return buffer.block_size;
-            }
-
-            return 0;
-        }
+        //         self.audio_graph.updateNodeStatus(node_index, .processed);
+        //     }
+        // }
 
         pub fn deinit(self: *Self) void {
             self.audio_graph.deinit();
@@ -150,7 +136,7 @@ pub fn Scheduler(comptime T: type) type {
                 buffer.deinit();
             }
 
-            if (self.execution_queue) |*queue| {
+            if (self.topology_queue) |*queue| {
                 queue.deinit();
             }
         }

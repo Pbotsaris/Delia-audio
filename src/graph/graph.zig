@@ -3,119 +3,6 @@ const bitmap = @import("bitmap.zig");
 pub const nodes = @import("nodes/nodes.zig");
 pub const scheduler = @import("scheduler.zig");
 
-/// Node in the topology queue containing its graph index, input dependencies,
-/// and an optional buffer index assigned during analysis.
-/// buffer_index must be assigned during analyzeBufferRequirementsAlloc.
-pub const TopologyQueueNode = struct {
-    index: usize,
-    inputs: []usize,
-    // assigned during graph analysis
-    buffer_index: ?usize = null,
-};
-
-/// Result of a graph's topological sort, maintaining node execution order
-/// and buffer allocation strategy. Manages its own memory allocation.
-/// Not designed to be resized after initialization.
-pub const TopologyQueue = struct {
-    nodes: std.MultiArrayList(TopologyQueueNode),
-    // maps graph node index to topology queue index
-    graph_to_queue_index: []usize,
-    allocator: std.mem.Allocator,
-
-    /// Initializes queue with fixed capacity. Cannot be resized.
-    pub fn init(allocator: std.mem.Allocator, capacity: usize) !TopologyQueue {
-        var nds = std.MultiArrayList(TopologyQueueNode){};
-        try nds.ensureTotalCapacity(allocator, capacity);
-
-        return .{
-            .allocator = allocator,
-            .nodes = nds,
-            .graph_to_queue_index = try allocator.alloc(usize, capacity),
-        };
-    }
-
-    /// Appends node and its dependencies to queue, taking ownership of inputs slice
-    pub fn append(self: *TopologyQueue, index: usize, inputs: []usize) !void {
-        const node_inputs = try self.allocator.alloc(usize, inputs.len);
-
-        // we want execution queue to own the node_inputs memory
-        @memcpy(node_inputs, inputs);
-
-        self.graph_to_queue_index[index] = self.nodes.len;
-
-        self.nodes.appendAssumeCapacity(.{
-            .index = index,
-            .inputs = node_inputs,
-        });
-    }
-
-    /// Analyzes the TopologyQueue to determine buffer requirements for graph processing.
-    /// Assigns buffer indices to nodes' `buffer_index` field and returns total number
-    /// of buffers required.
-    /// Caller can reference `buffer_index` to determine which buffer to use for each node.
-    /// And the returned number of buffers to allocate memory.
-    ///
-    /// Note: Allocates temporary memory. Avoid in real-time contexts.
-    pub fn analyzeBufferRequirementsAlloc(queue: *TopologyQueue) !usize {
-
-        // ref_counts keeps track of the number of references to each node
-        var ref_counts = std.ArrayList(usize).init(queue.allocator);
-        // free_buffers keeps track of the indexes of the buffers that are not being used
-        var free_buffers = std.ArrayList(usize).init(queue.allocator);
-
-        defer ref_counts.deinit();
-        defer free_buffers.deinit();
-
-        @memset(ref_counts.items, 0);
-        try ref_counts.resize(queue.nodes.len);
-
-        // reference counting
-        for (queue.nodes.items(.inputs)) |inputs| {
-            for (inputs) |input_graph_idx| {
-                const input_queue_idx = queue.graph_to_queue_index[input_graph_idx];
-                ref_counts.items[input_queue_idx] += 1;
-            }
-        }
-
-        var next_buffer_idx: usize = 0;
-
-        // update buffer indexes
-        for (queue.nodes.items(.inputs), 0..) |inputs, queue_idx| {
-            for (inputs) |input_graph_idx| {
-                const input_queue_idx = queue.graph_to_queue_index[input_graph_idx];
-                ref_counts.items[input_queue_idx] -= 1;
-
-                if (ref_counts.items[input_queue_idx] == 0) {
-                    const buffer_idx = queue.nodes.items(.buffer_index)[input_queue_idx]
-                    // if buffer is null there is a bug in  this implementation
-                    orelse unreachable;
-
-                    try free_buffers.append(buffer_idx);
-                }
-            }
-
-            if (free_buffers.items.len > 0) {
-                queue.nodes.items(.buffer_index)[queue_idx] = free_buffers.pop();
-                continue;
-            }
-
-            queue.nodes.items(.buffer_index)[queue_idx] = next_buffer_idx;
-            next_buffer_idx += 1;
-        }
-
-        return next_buffer_idx;
-    }
-
-    pub fn deinit(self: *TopologyQueue) void {
-        for (self.nodes.items(.inputs)) |inputs| {
-            self.allocator.free(inputs);
-        }
-
-        self.nodes.deinit(self.allocator);
-        self.allocator.free(self.graph_to_queue_index);
-    }
-};
-
 /// Audio processing graph containing nodes, edges, and graph processing logic.
 /// Designed to manage the execution order of nodes based on their dependencies.
 /// Supports dynamic node connections and topological sorting.
@@ -231,9 +118,8 @@ pub fn Graph(comptime T: type) type {
 
             if (node_count <= self.options.max_static_size) {
                 try self.topologicalStatic(&results);
-            }
+            } else unreachable; // TODO, dynamic version for very long graphs
 
-            // TODO, dynamic version for very long graphs, Dont worry I will do this soon!
             return results;
         }
 
@@ -318,6 +204,120 @@ pub fn Graph(comptime T: type) type {
     };
 }
 
+/// Node in the topology queue containing its graph index, input dependencies,
+/// and an optional buffer index assigned during analysis.
+/// buffer_index must be assigned during analyzeBufferRequirementsAlloc.
+pub const TopologyQueueNode = struct {
+    /// Index of the node in the graph
+    graph_index: usize,
+    /// Indices of the nodes that this node depends on
+    inputs: []usize,
+    /// Index of the buffer assigned to this node. Assigned during graph analysis
+    buffer_index: ?usize = null,
+};
+
+/// Result of a graph's topological sort, maintaining node execution order
+/// and buffer allocation strategy. Manages its own memory allocation.
+/// Not designed to be resized after initialization.
+pub const TopologyQueue = struct {
+    nodes: std.MultiArrayList(TopologyQueueNode),
+    // maps graph node index to topology queue index
+    graph_to_queue_index: []usize,
+    allocator: std.mem.Allocator,
+
+    /// Initializes queue with fixed capacity. Cannot be resized.
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) !TopologyQueue {
+        var nds = std.MultiArrayList(TopologyQueueNode){};
+        try nds.ensureTotalCapacity(allocator, capacity);
+
+        return .{
+            .allocator = allocator,
+            .nodes = nds,
+            .graph_to_queue_index = try allocator.alloc(usize, capacity),
+        };
+    }
+
+    /// Appends node and its dependencies to queue, taking ownership of inputs slice
+    pub fn append(self: *TopologyQueue, graph_index: usize, inputs: []usize) !void {
+        const node_inputs = try self.allocator.alloc(usize, inputs.len);
+
+        // we want execution queue to own the node_inputs memory
+        @memcpy(node_inputs, inputs);
+
+        self.graph_to_queue_index[graph_index] = self.nodes.len;
+
+        self.nodes.appendAssumeCapacity(.{
+            .graph_index = graph_index,
+            .inputs = node_inputs,
+        });
+    }
+
+    /// Analyzes the TopologyQueue to determine buffer requirements for graph processing.
+    /// Assigns buffer indices to nodes' `buffer_index` field and returns total number
+    /// of buffers required.
+    /// Caller can reference `buffer_index` to determine which buffer to use for each node.
+    /// And the returned number of buffers to allocate memory.
+    ///
+    /// Note: Allocates temporary memory. Avoid in real-time contexts.
+    pub fn analyzeBufferRequirementsAlloc(queue: *TopologyQueue) !usize {
+
+        // ref_counts keeps track of the number of references to each node
+        var ref_counts = std.ArrayList(usize).init(queue.allocator);
+        // free_buffers keeps track of the indexes of the buffers that are not being used
+        var free_buffers = std.ArrayList(usize).init(queue.allocator);
+
+        defer ref_counts.deinit();
+        defer free_buffers.deinit();
+
+        try ref_counts.resize(queue.nodes.len);
+        @memset(ref_counts.items, 0);
+
+        // reference counting
+        for (queue.nodes.items(.inputs)) |inputs| {
+            for (inputs) |input_graph_idx| {
+                const input_queue_idx = queue.graph_to_queue_index[input_graph_idx];
+                ref_counts.items[input_queue_idx] += 1;
+            }
+        }
+
+        var next_buffer_idx: usize = 0;
+
+        // update buffer indexes
+        for (queue.nodes.items(.inputs), 0..) |inputs, queue_idx| {
+            for (inputs) |input_graph_idx| {
+                const input_queue_idx = queue.graph_to_queue_index[input_graph_idx];
+                ref_counts.items[input_queue_idx] -= 1;
+
+                if (ref_counts.items[input_queue_idx] == 0) {
+                    // must not be null otherwise there is a bug
+                    const buffer_idx = queue.nodes.items(.buffer_index)[input_queue_idx].?;
+
+                    try free_buffers.append(buffer_idx);
+                }
+            }
+
+            if (free_buffers.items.len > 0) {
+                queue.nodes.items(.buffer_index)[queue_idx] = free_buffers.pop();
+                continue;
+            }
+
+            queue.nodes.items(.buffer_index)[queue_idx] = next_buffer_idx;
+            next_buffer_idx += 1;
+        }
+
+        return next_buffer_idx;
+    }
+
+    pub fn deinit(self: *TopologyQueue) void {
+        for (self.nodes.items(.inputs)) |inputs| {
+            self.allocator.free(inputs);
+        }
+
+        self.nodes.deinit(self.allocator);
+        self.allocator.free(self.graph_to_queue_index);
+    }
+};
+
 // just an example to use in the graph
 const GainNode = struct {
     gain: f64,
@@ -366,9 +366,9 @@ test "Graph: topological sort validation" {
     defer result.deinit();
 
     // Verify correct order
-    try std.testing.expectEqual(result.nodes.items(.index)[0], node_a.index);
-    try std.testing.expectEqual(result.nodes.items(.index)[1], node_b.index);
-    try std.testing.expectEqual(result.nodes.items(.index)[2], node_c.index);
+    try std.testing.expectEqual(result.nodes.items(.graph_index)[0], node_a.index);
+    try std.testing.expectEqual(result.nodes.items(.graph_index)[1], node_b.index);
+    try std.testing.expectEqual(result.nodes.items(.graph_index)[2], node_c.index);
 }
 
 test "Graph: detect cycles" {
@@ -406,6 +406,86 @@ test "Graph: complex DAG" {
     defer result.deinit();
 
     // Verify node 0 comes first and node 3 comes last
-    try std.testing.expectEqual(result.nodes.items(.index)[0], nds[0].index);
-    try std.testing.expectEqual(result.nodes.items(.index)[3], nds[3].index);
+    try std.testing.expectEqual(result.nodes.items(.graph_index)[0], nds[0].index);
+    try std.testing.expectEqual(result.nodes.items(.graph_index)[3], nds[3].index);
+}
+
+test "TopologyQueue: Complex Graph" {
+    // Graph structure:
+    //     B  -- C
+    //   /   \   |
+    // A      D  |
+    //   \   / \ |
+    //     E     F
+    //
+
+    const allocator = std.testing.allocator;
+    var graph = Graph(f64).init(allocator, .{});
+    defer graph.deinit();
+
+    const node_a = try graph.addNode(GainNode{ .gain = 0.1 });
+    const node_b = try graph.addNode(GainNode{ .gain = 0.2 });
+    const node_c = try graph.addNode(GainNode{ .gain = 0.3 });
+    const node_d = try graph.addNode(GainNode{ .gain = 0.4 });
+    const node_e = try graph.addNode(GainNode{ .gain = 0.5 });
+    const node_f = try graph.addNode(GainNode{ .gain = 0.5 });
+
+    try node_b.connect(node_a);
+    try node_b.connect(node_d);
+    try node_b.connect(node_c);
+
+    try node_c.connect(node_f);
+
+    try node_d.connect(node_e);
+    try node_d.connect(node_f);
+
+    try node_a.connect(node_e);
+
+    var queue = try graph.topologicalSortAlloc(allocator);
+    defer queue.deinit();
+
+    const required_buffers = try queue.analyzeBufferRequirementsAlloc();
+
+    // Check expected number of buffers
+    try std.testing.expectEqual(3, required_buffers);
+
+    // Step 1: Collect the queue indices of each node for verification
+    var node_queue_indices = std.ArrayList(usize).init(allocator);
+    defer node_queue_indices.deinit();
+    try node_queue_indices.resize(graph.nodes.items.len);
+
+    for (queue.nodes.items(.graph_index), 0..) |node_idx, i| {
+        node_queue_indices.items[node_idx] = i;
+    }
+
+    const q_idx_a = queue.graph_to_queue_index[node_a.index];
+    const buff_idx_a = queue.nodes.get(q_idx_a).buffer_index;
+
+    const q_idx_b = queue.graph_to_queue_index[node_b.index];
+    const buff_idx_b = queue.nodes.get(q_idx_b).buffer_index;
+
+    const q_idx_c = queue.graph_to_queue_index[node_c.index];
+    const buff_idx_c = queue.nodes.get(q_idx_c).buffer_index;
+
+    const q_idx_d = queue.graph_to_queue_index[node_d.index];
+    const buff_idx_d = queue.nodes.get(q_idx_d).buffer_index;
+
+    const q_idx_e = queue.graph_to_queue_index[node_e.index];
+    const buff_idx_e = queue.nodes.get(q_idx_e).buffer_index;
+
+    const q_idx_f = queue.graph_to_queue_index[node_f.index];
+    const buff_idx_f = queue.nodes.get(q_idx_f).buffer_index;
+
+    try std.testing.expectEqual(1, buff_idx_a);
+    try std.testing.expectEqual(0, buff_idx_b);
+    try std.testing.expectEqual(0, buff_idx_c);
+    try std.testing.expectEqual(2, buff_idx_d);
+    try std.testing.expectEqual(1, buff_idx_e);
+    try std.testing.expectEqual(2, buff_idx_f);
+
+    try std.testing.expect(buff_idx_a != buff_idx_b); // A and B shouldn't share buffers
+    try std.testing.expect(buff_idx_b == buff_idx_c); // B and C share buffer 0
+    try std.testing.expect(buff_idx_a == buff_idx_e); // A and E share buffer 1
+    try std.testing.expect(buff_idx_f == buff_idx_d); // F reuses buffer 2 from D
+    try std.testing.expect(buff_idx_d != buff_idx_b); // D should not share buffer with B
 }
