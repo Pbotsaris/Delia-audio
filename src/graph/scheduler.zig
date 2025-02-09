@@ -44,7 +44,7 @@ pub fn Scheduler(comptime T: type) type {
                 try node.prepare(ctx);
             }
 
-            const queue = try self.audio_graph.topologicalSortAlloc(self.allocator);
+            var queue = try self.audio_graph.topologicalSortAlloc(self.allocator);
 
             if (self.topology_queue) |*q| {
                 q.deinit();
@@ -70,41 +70,62 @@ pub fn Scheduler(comptime T: type) type {
             });
         }
 
-        pub fn process(_: *Self) !void {}
+        pub fn process(self: *Self) !void {
+            // WORK IN PROGRESS NOT READY TODO
+            const queue = self.topology_queue orelse return;
+            var buffers = self.buffers orelse return;
 
-        //        pub fn process(self: *Self) !void {
-        //            // WORK IN PROGRESS NOT READY TODO
-        //            const queue = self.execution_queue orelse return;
-        //            var buffers = self.buffers orelse return;
-        //
-        //            var processed_count: usize = 0;
-        //            const total_nodes = queue.nodes.len;
-        //
-        //            while (processed_count < total_nodes) {
-        //                for (queue.nodes.slice()) |queue_node| {
-        //                    var exec_node = self.audio_graph.nodes.items[queue_node.];
-        //
-        //                    if (exec_node.nodeStatus() == .processed) continue;
-        //
-        //                    const all_inputs_ready: bool = blk: {
-        //                        for (inputs) |input_index| {
-        //                            const input_node = self.audio_graph.nodes.items[input_index];
-        //                            if (input_node.nodeStatus() != .proccessed) break :blk false;
-        //                        }
-        //
-        //                        break :blk true;
-        //                    };
-        //
-        //                    if (!all_inputs_ready) continue;
-        //
-        //                    const node_view = buffers.getView(exec_node.buffer_index);
-        //
-        //                    for (inputs, 0..) |input_index, i| {
-        //                        input_views[i] = self.buffers.getView(input_index);
-        //                    }
-        //                }
-        //            }
-        //        }
+            var processed_count: usize = 0;
+            const total_nodes = queue.nodes.len;
+
+            while (processed_count < total_nodes) {
+                const queue_items = queue.nodes.slice();
+
+                for (0..queue_items.len) |idx| {
+                    // queue_item has information about the index of nodes in the graph
+                    // the inputs/dependencies of the node
+                    // which buffer to use when processing the node
+                    const queue_item = queue_items.get(idx);
+                    var graph_node = self.audio_graph.nodes.items[queue_item.graph_index];
+
+                    if (graph_node.nodeStatus() == .processed) continue;
+
+                    const all_inputs_ready: bool = blk: {
+                        for (queue_item.inputs) |input_index| {
+                            const input_node = self.audio_graph.nodes.items[input_index];
+                            if (input_node.nodeStatus() != .proccessed) break :blk false;
+                        }
+
+                        break :blk true;
+                    };
+
+                    if (!all_inputs_ready) continue;
+
+                    for (queue_item.inputs) |input_index| {
+                        const parent_queue_index = queue.getFromGraphIndex(input_index);
+                        const parent_buffer_index = queue.nodes[parent_queue_index].buffer_index;
+
+                        if (parent_buffer_index != queue_item.buffer_index) {
+                            // todo check for nulls here
+                            const parent_view = buffers.getView(parent_buffer_index.?);
+                            const child_view = buffers.getView(queue_item.buffer_index.?);
+
+                            try child_view.copyFrom(parent_view);
+                            parent_view.zero();
+                        }
+                    }
+
+                    const node_buffer_view = buffers.getView(queue_item.buffer_index);
+
+                    // when to copy and when to share?
+                    const ctx = ProcessContext{ .buffer = &node_buffer_view };
+                    graph_node.process(ctx);
+
+                    self.audio_graph.updateNodeStatus(queue_item.graph_index, .processed);
+                    processed_count += 1;
+                }
+            }
+        }
 
         // pub fn process(self: *Self) !void {
         //     const queue = self.topology_queue orelse return;

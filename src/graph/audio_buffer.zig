@@ -64,6 +64,14 @@ pub fn ChannelView(comptime T: type) type {
             }
         }
 
+        pub inline fn copyFrom(self: *Self, other: *Self) !void {
+            if (self.buffer.len != other.buffer.len) {
+                return ChannelViewError.invalid_buffer_length;
+            }
+
+            @memcpy(self.buffer, other.buffer);
+        }
+
         pub inline fn totalSampleCount(self: Self) usize {
             return self.buffer.len;
         }
@@ -119,6 +127,14 @@ pub fn UnmanagedChannelView(comptime T: type) type {
                 .interleaved => self.buffer[at_frame * self.n_channels + at_channel] = sample,
                 .non_interleaved => self.buffer[at_channel * self.block_size + at_frame] = sample,
             }
+        }
+
+        pub inline fn copyFrom(self: *Self, other: *Self) !void {
+            if (self.buffer.len != other.buffer.len) {
+                return ChannelViewError.invalid_buffer_length;
+            }
+
+            @memcpy(self.buffer, other.buffer);
         }
 
         pub inline fn totalSampleCount(self: Self) usize {

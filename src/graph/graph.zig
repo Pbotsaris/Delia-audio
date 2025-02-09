@@ -214,6 +214,10 @@ pub const TopologyQueueNode = struct {
     inputs: []usize,
     /// Index of the buffer assigned to this node. Assigned during graph analysis
     buffer_index: ?usize = null,
+
+    pub fn hasSameBuffer(self: TopologyQueueNode, other: TopologyQueueNode) bool {
+        return self.buffer_index == other.buffer_index;
+    }
 };
 
 /// Result of a graph's topological sort, maintaining node execution order
@@ -237,6 +241,11 @@ pub const TopologyQueue = struct {
         };
     }
 
+    pub fn getFromGraphIndex(self: TopologyQueue, graph_index: usize) !TopologyQueueNode {
+        const queue_index = self.graph_to_queue_index[graph_index];
+        return self.nodes.get(queue_index);
+    }
+
     /// Appends node and its dependencies to queue, taking ownership of inputs slice
     pub fn append(self: *TopologyQueue, graph_index: usize, inputs: []usize) !void {
         const node_inputs = try self.allocator.alloc(usize, inputs.len);
@@ -253,8 +262,8 @@ pub const TopologyQueue = struct {
     }
 
     /// Analyzes the TopologyQueue to determine buffer requirements for graph processing.
-    /// Assigns buffer indices to nodes' `buffer_index` field and returns total number
-    /// of buffers required.
+    /// Assigns buffer indices to nodes' `buffer_index` field and returns total number of buffers required.
+    /// Because of referencing counting, parent nodes share buffers with their last connected child.
     /// Caller can reference `buffer_index` to determine which buffer to use for each node.
     /// And the returned number of buffers to allocate memory.
     ///
