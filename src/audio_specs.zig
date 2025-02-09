@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 
 pub const BufferSize = enum(usize) {
     const Self = @This();
-
     buf_64 = 64,
     buf_128 = 128,
     buf_256 = 256,
@@ -19,6 +18,11 @@ pub const BufferSize = enum(usize) {
 pub const BlockSize = enum(usize) {
     const Self = @This();
 
+    // small blocks are use in tests
+    blk_4 = 4,
+    blk_8 = 8,
+    blk_16 = 16,
+    blk_32 = 32,
     blk_64 = 64,
     blk_128 = 128,
     blk_256 = 256,

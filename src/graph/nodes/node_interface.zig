@@ -29,7 +29,7 @@ pub fn GenericNode(comptime T: type) type {
 
         // ProcessContext does not own the buffer
         pub const ProcessContext = struct {
-            buffer: *audio_buffer.ChannelView(T),
+            buffer: *audio_buffer.UnmanagedChannelView(T),
         };
 
         pub const VTable = struct {
@@ -173,18 +173,18 @@ test "Test Processing Functionality" {
 
     var node = try GenNode.createNode(allocator, GainNode{ .gain = 2.0 });
     defer node.destroy();
-    const input = [_]f64{ 1.0, 2.0, 3.0 };
+    var input = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
 
-    var buffer = try audio_buffer.ChannelView(f64).init(allocator, .{
+    var buffer = try audio_buffer.UnmanagedChannelView(f64).init(&input, .{
         .n_channels = 1,
-        .block_size = .blk_64,
+        .block_size = .blk_4,
         .access = .interleaved,
     });
-    defer buffer.deinit();
-    buffer.writeSample(0, 0, input[0]);
 
+    buffer.writeSample(0, 0, input[0]);
     buffer.writeSample(0, 1, input[1]);
     buffer.writeSample(0, 2, input[2]);
+    buffer.writeSample(0, 3, input[3]);
 
     const ctx = GenNode.ProcessContext{
         .buffer = &buffer,
@@ -195,6 +195,7 @@ test "Test Processing Functionality" {
     try std.testing.expectEqual(2.0, buffer.readSample(0, 0));
     try std.testing.expectEqual(4.0, buffer.readSample(0, 1));
     try std.testing.expectEqual(6.0, buffer.readSample(0, 2));
+    try std.testing.expectEqual(8.0, buffer.readSample(0, 3));
 }
 
 test "Test Atomic Node Status Transitions" {

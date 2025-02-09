@@ -3,29 +3,45 @@ const bitmap = @import("bitmap.zig");
 pub const nodes = @import("nodes/nodes.zig");
 pub const scheduler = @import("scheduler.zig");
 
-pub const ExecutionNode = struct {
+/// Node in the topology queue containing its graph index, input dependencies,
+/// and an optional buffer index assigned during analysis.
+/// buffer_index must be assigned during analyzeBufferRequirementsAlloc.
+pub const TopologyQueueNode = struct {
     index: usize,
     inputs: []usize,
+    // assigned during graph analysis
+    buffer_index: ?usize = null,
 };
 
-pub const ExecutionQueue = struct {
-    nodes: std.MultiArrayList(ExecutionNode),
+/// Result of a graph's topological sort, maintaining node execution order
+/// and buffer allocation strategy. Manages its own memory allocation.
+/// Not designed to be resized after initialization.
+pub const TopologyQueue = struct {
+    nodes: std.MultiArrayList(TopologyQueueNode),
+    // maps graph node index to topology queue index
+    graph_to_queue_index: []usize,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, capacity: usize) !ExecutionQueue {
-        var nds = std.MultiArrayList(ExecutionNode){};
+    /// Initializes queue with fixed capacity. Cannot be resized.
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) !TopologyQueue {
+        var nds = std.MultiArrayList(TopologyQueueNode){};
         try nds.ensureTotalCapacity(allocator, capacity);
 
         return .{
             .allocator = allocator,
             .nodes = nds,
+            .graph_to_queue_index = try allocator.alloc(usize, capacity),
         };
     }
 
-    // we want execution queue to own the node_inputs memory
-    pub fn append(self: *ExecutionQueue, index: usize, inputs: []usize) !void {
+    /// Appends node and its dependencies to queue, taking ownership of inputs slice
+    pub fn append(self: *TopologyQueue, index: usize, inputs: []usize) !void {
         const node_inputs = try self.allocator.alloc(usize, inputs.len);
+
+        // we want execution queue to own the node_inputs memory
         @memcpy(node_inputs, inputs);
+
+        self.graph_to_queue_index[index] = self.nodes.len;
 
         self.nodes.appendAssumeCapacity(.{
             .index = index,
@@ -33,15 +49,76 @@ pub const ExecutionQueue = struct {
         });
     }
 
-    pub fn deinit(self: *ExecutionQueue) void {
+    /// Analyzes the TopologyQueue to determine buffer requirements for graph processing.
+    /// Assigns buffer indices to nodes' `buffer_index` field and returns total number
+    /// of buffers required.
+    /// Caller can reference `buffer_index` to determine which buffer to use for each node.
+    /// And the returned number of buffers to allocate memory.
+    ///
+    /// Note: Allocates temporary memory. Avoid in real-time contexts.
+    pub fn analyzeBufferRequirementsAlloc(queue: *TopologyQueue) !usize {
+
+        // ref_counts keeps track of the number of references to each node
+        var ref_counts = std.ArrayList(usize).init(queue.allocator);
+        // free_buffers keeps track of the indexes of the buffers that are not being used
+        var free_buffers = std.ArrayList(usize).init(queue.allocator);
+
+        defer ref_counts.deinit();
+        defer free_buffers.deinit();
+
+        @memset(ref_counts.items, 0);
+        try ref_counts.resize(queue.nodes.len);
+
+        // reference counting
+        for (queue.nodes.items(.inputs)) |inputs| {
+            for (inputs) |input_graph_idx| {
+                const input_queue_idx = queue.graph_to_queue_index[input_graph_idx];
+                ref_counts.items[input_queue_idx] += 1;
+            }
+        }
+
+        var next_buffer_idx: usize = 0;
+
+        // update buffer indexes
+        for (queue.nodes.items(.inputs), 0..) |inputs, queue_idx| {
+            for (inputs) |input_graph_idx| {
+                const input_queue_idx = queue.graph_to_queue_index[input_graph_idx];
+                ref_counts.items[input_queue_idx] -= 1;
+
+                if (ref_counts.items[input_queue_idx] == 0) {
+                    const buffer_idx = queue.nodes.items(.buffer_index)[input_queue_idx]
+                    // if buffer is null there is a bug in  this implementation
+                    orelse unreachable;
+
+                    try free_buffers.append(buffer_idx);
+                }
+            }
+
+            if (free_buffers.items.len > 0) {
+                queue.nodes.items(.buffer_index)[queue_idx] = free_buffers.pop();
+                continue;
+            }
+
+            queue.nodes.items(.buffer_index)[queue_idx] = next_buffer_idx;
+            next_buffer_idx += 1;
+        }
+
+        return next_buffer_idx;
+    }
+
+    pub fn deinit(self: *TopologyQueue) void {
         for (self.nodes.items(.inputs)) |inputs| {
             self.allocator.free(inputs);
         }
 
         self.nodes.deinit(self.allocator);
+        self.allocator.free(self.graph_to_queue_index);
     }
 };
 
+/// Audio processing graph containing nodes, edges, and graph processing logic.
+/// Designed to manage the execution order of nodes based on their dependencies.
+/// Supports dynamic node connections and topological sorting.
 pub fn Graph(comptime T: type) type {
     if (T != f32 and T != f64) {
         @compileError("AudioGraph only supports f32 and f64");
@@ -51,11 +128,20 @@ pub fn Graph(comptime T: type) type {
         const Self = @This();
         const GenericNode = nodes.interface.GenericNode(T);
 
+        /// Array of all nodes in the graph. Each node stores its own state and processing logic.
         nodes: std.ArrayList(GenericNode),
+
+        /// Directed edges defining the connections between nodes.
+        /// `from` and `to` indicate the source and destination node indices.
         edges: std.ArrayList(Edges),
+
+        /// Memory allocator for dynamic allocations within the graph.
         allocator: std.mem.Allocator,
+
+        /// Graph configuration options, such as static buffer size limits.
         options: GraphOptions,
 
+        /// Configuration options for graph initialization.
         pub const GraphOptions = struct {
             comptime max_static_size: usize = 1024,
         };
@@ -65,15 +151,19 @@ pub fn Graph(comptime T: type) type {
             cycle_detected,
         };
 
+        /// Represents a directed connection from one node to another.
         const Edges = struct {
             from: usize,
             to: usize,
         };
 
+        /// Handle to a graph node, enabling operations like connecting nodes.
         const NodeHandle = struct {
             index: usize,
             graph: *Self,
 
+            /// Connects the current node to another node within the same graph.
+            /// Creates an edge from the current node (`self`) to the target node (`to`).
             pub fn connect(self: NodeHandle, to: NodeHandle) !void {
                 try self.graph.connect(self, to);
             }
@@ -97,10 +187,14 @@ pub fn Graph(comptime T: type) type {
             self.edges.deinit();
         }
 
+        /// Creates a directed connection between two nodes.
+        /// Adds an edge from the `from` node to the `to` node.
         pub fn connect(self: *Self, from: NodeHandle, to: NodeHandle) !void {
             try self.edges.append(.{ .from = from.index, .to = to.index });
         }
 
+        /// Adds a new node to the graph and returns a handle to it.
+        /// The node type must implement the `GenericNode` interface.
         pub fn addNode(self: *Self, node: anytype) !NodeHandle {
             const generic_node = try GenericNode.createNode(self.allocator, node);
             const index = self.nodes.items.len;
@@ -109,11 +203,14 @@ pub fn Graph(comptime T: type) type {
             return .{ .index = index, .graph = self };
         }
 
-        // this may become a batch update operation
+        /// Updates the status of a node by index, useful for runtime changes.
+        // TODO: this may become a batch update operation
         pub fn updateNodeStatus(self: *Self, index: usize, status: nodes.interface.NodeStatus) void {
             self.nodes.items[index].status.store(status, .seq_cst);
         }
 
+        /// Exports the graph to a DOT format file for visualization.
+        /// The output is compatible with tools like Graphviz.
         pub fn debugGraph(self: Self, path: []const u8) !void {
             var file = try std.fs.cwd().createFile(path, .{});
             defer file.close();
@@ -122,22 +219,27 @@ pub fn Graph(comptime T: type) type {
             try self.exportDot(writer);
         }
 
-        pub fn topologicalSortAlloc(self: Self, allocator: std.mem.Allocator) !ExecutionQueue {
+        // Performs a topological sort of the graph, returning a `TopologyQueue`.
+        /// Ensures nodes are sorted based on their dependencies for correct execution order.
+        /// Allocates dynamic memory for sorting. Do not use in real-time contexts.
+        /// Returned TopologyQueue is owned by the caller and must be manually deinitialized.
+        pub fn topologicalSortAlloc(self: Self, allocator: std.mem.Allocator) !TopologyQueue {
             const node_count = self.nodes.items.len;
 
-            var results = try ExecutionQueue.init(allocator, node_count);
+            var results = try TopologyQueue.init(allocator, node_count);
             errdefer results.deinit();
 
             if (node_count <= self.options.max_static_size) {
                 try self.topologicalStatic(&results);
             }
 
-            // TODO, dynamic version for very long graphs
-
+            // TODO, dynamic version for very long graphs, Dont worry I will do this soon!
             return results;
         }
 
-        fn topologicalStatic(self: Self, results: *ExecutionQueue) !void {
+        /// Static topological sorting optimized for smaller graphs.
+        /// Uses preallocated arrays based on the static size limit defined in `GraphOptions`.
+        fn topologicalStatic(self: Self, results: *TopologyQueue) !void {
             var in_degrees: [self.options.max_static_size]u32 = .{0} ** self.options.max_static_size;
             var visited = bitmap.StaticBitMap(self.options.max_static_size).init();
             var queue: [self.options.max_static_size]usize = undefined;

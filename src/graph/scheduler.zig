@@ -23,7 +23,7 @@ pub fn Scheduler(comptime T: type) type {
         audio_graph: graph.Graph(T),
         allocator: std.mem.Allocator,
         execution_queue: ?graph.ExecutionQueue = null,
-        buffer: ?audio_buffer.ChannelView(T) = null,
+        buffers: ?audio_buffer.UniformChannelViews(T) = null,
 
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{
@@ -40,16 +40,6 @@ pub fn Scheduler(comptime T: type) type {
         }
 
         pub fn prepare(self: *Self, ctx: PrepareContext) !void {
-            if (self.buffer) |*buffer| {
-                buffer.deinit();
-            }
-
-            self.buffer = try audio_buffer.ChannelView(T).init(self.allocator, .{
-                .n_channels = ctx.n_channels,
-                .block_size = ctx.block_size,
-                .access = ctx.access_pattern,
-            });
-
             for (self.audio_graph.nodes.items) |*node| {
                 try node.prepare(ctx);
             }
@@ -61,11 +51,71 @@ pub fn Scheduler(comptime T: type) type {
             }
 
             self.execution_queue = queue;
+
+            const max_inputs: usize = blk: {
+                var max: usize = 0;
+                for (queue.nodes.items(.inputs)) |inputs| {
+                    if (inputs.len > max) max = @max(max, inputs.len);
+                }
+
+                break :blk max;
+            };
+
+            if (self.buffers) |*buffers| {
+                // we need more buffers, so we deinit the current ones. maybe could optimize this
+                if (buffers.opts.n_views < max_inputs) buffers.deinit()
+                // we have enough buffers
+                else return;
+            }
+
+            self.buffers = try audio_buffer.UniformChannelViews(T).init(self.allocator, .{
+                .n_views = max_inputs,
+                .n_channels = ctx.n_channels,
+                .block_size = ctx.block_size,
+                .access = ctx.access_pattern,
+            });
         }
 
+        //        pub fn process(self: *Self) !void {
+        //            // WORK IN PROGRESS NOT READY TODO
+        //            const queue = self.execution_queue orelse return;
+        //            var buffers = self.buffers orelse return;
+        //
+        //            var input_views: [buffers.n_views]audio_buffer.UnmanagedChannelView(T) = undefined;
+        //
+        //            var processed_count: usize = 0;
+        //            const total_nodes = queue.nodes.len;
+        //
+        //            while (processed_count < total_nodes) {
+        //                for (queue.nodes.items(.index), queue.nodes.items(.inputs)) |node_index, inputs| {
+        //                    var exec_node = self.audio_graph.nodes.items[node_index];
+        //
+        //                    if (exec_node.nodeStatus() == .processed) continue;
+        //
+        //                    const all_inputs_ready: bool = blk: {
+        //                        for (inputs) |input_index| {
+        //                            const input_node = self.audio_graph.nodes.items[input_index];
+        //                            if (input_node.nodeStatus() != .proccessed) break :blk false;
+        //                        }
+        //
+        //                        break :blk true;
+        //                    };
+        //
+        //                    if (!all_inputs_ready) continue;
+        //
+        //                    const node_view = buffers.getView(exec_node.buffer_index);
+        //
+        //                    for (inputs, 0..) |input_index, i| {
+        //                        input_views[i] = self.buffers.getView(input_index);
+        //                    }
+        //                }
+        //            }
+        //        }
+        //
         pub fn process(self: *Self) !void {
             const queue = self.execution_queue orelse return;
-            var buffer = self.buffer orelse return;
+            var buffers = self.buffers orelse return;
+            var buffer = buffers.getView(0);
 
             const ctx = ProcessContext{ .buffer = &buffer };
 
@@ -86,7 +136,7 @@ pub fn Scheduler(comptime T: type) type {
         }
 
         pub fn blockSize(self: Self) usize {
-            if (self.buffer) |buffer| {
+            if (self.buffers) |buffer| {
                 return buffer.block_size;
             }
 
@@ -96,7 +146,7 @@ pub fn Scheduler(comptime T: type) type {
         pub fn deinit(self: *Self) void {
             self.audio_graph.deinit();
 
-            if (self.buffer) |*buffer| {
+            if (self.buffers) |*buffer| {
                 buffer.deinit();
             }
 
