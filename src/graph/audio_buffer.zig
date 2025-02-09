@@ -57,14 +57,14 @@ pub fn ChannelView(comptime T: type) type {
             };
         }
 
-        pub inline fn writeSample(self: *Self, at_channel: usize, at_frame: usize, sample: T) void {
+        pub inline fn writeSample(self: Self, at_channel: usize, at_frame: usize, sample: T) void {
             switch (self.access) {
                 .interleaved => self.buffer[at_frame * self.n_channels + at_channel] = sample,
                 .non_interleaved => self.buffer[at_channel * self.block_size + at_frame] = sample,
             }
         }
 
-        pub inline fn copyFrom(self: *Self, other: *Self) !void {
+        pub inline fn copyFrom(self: Self, other: Self) !void {
             if (self.buffer.len != other.buffer.len) {
                 return ChannelViewError.invalid_buffer_length;
             }
@@ -76,7 +76,7 @@ pub fn ChannelView(comptime T: type) type {
             return self.buffer.len;
         }
 
-        pub inline fn zero(self: *Self) void {
+        pub inline fn zero(self: Self) void {
             @memset(self.buffer, 0);
         }
 
@@ -122,14 +122,15 @@ pub fn UnmanagedChannelView(comptime T: type) type {
             };
         }
 
-        pub inline fn writeSample(self: *Self, at_channel: usize, at_frame: usize, sample: T) void {
+        pub inline fn writeSample(self: Self, at_channel: usize, at_frame: usize, sample: T) void {
             switch (self.access) {
                 .interleaved => self.buffer[at_frame * self.n_channels + at_channel] = sample,
                 .non_interleaved => self.buffer[at_channel * self.block_size + at_frame] = sample,
             }
         }
 
-        pub inline fn copyFrom(self: *Self, other: *Self) !void {
+        // we don't need pointers self, we are chaning the inner memory in buffer
+        pub inline fn copyFrom(self: Self, other: Self) !void {
             if (self.buffer.len != other.buffer.len) {
                 return ChannelViewError.invalid_buffer_length;
             }
@@ -141,7 +142,8 @@ pub fn UnmanagedChannelView(comptime T: type) type {
             return self.buffer.len;
         }
 
-        pub inline fn zero(self: *Self) void {
+        // we don't need pointers self, we are chaning the inner memory in buffer
+        pub inline fn zero(self: Self) void {
             @memset(self.buffer, 0);
         }
     };

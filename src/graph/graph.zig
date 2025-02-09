@@ -241,9 +241,13 @@ pub const TopologyQueue = struct {
         };
     }
 
-    pub fn getFromGraphIndex(self: TopologyQueue, graph_index: usize) !TopologyQueueNode {
+    pub fn getFromGraphIndex(self: TopologyQueue, graph_index: usize) TopologyQueueNode {
         const queue_index = self.graph_to_queue_index[graph_index];
         return self.nodes.get(queue_index);
+    }
+
+    pub fn getLast(self: TopologyQueue) TopologyQueueNode {
+        return self.nodes.get(self.nodes.len - 1);
     }
 
     /// Appends node and its dependencies to queue, taking ownership of inputs slice

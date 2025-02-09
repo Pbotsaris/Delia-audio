@@ -35,7 +35,7 @@ pub fn Scheduler(comptime T: type) type {
         pub fn build_graph(self: *Self, sample_rate: specs.SampleRate) !void {
             var sine_node = try self.audio_graph.addNode(SineNode.init(540.0, 1.0, sample_rate.toFloat(T)));
 
-            const gain_node = try self.audio_graph.addNode(GainNode{ .gain = 0.01 });
+            const gain_node = try self.audio_graph.addNode(GainNode{ .gain = 0.5 });
             try sine_node.connect(gain_node);
         }
 
@@ -93,7 +93,7 @@ pub fn Scheduler(comptime T: type) type {
                     const all_inputs_ready: bool = blk: {
                         for (queue_item.inputs) |input_index| {
                             const input_node = self.audio_graph.nodes.items[input_index];
-                            if (input_node.nodeStatus() != .proccessed) break :blk false;
+                            if (input_node.nodeStatus() != .processed) break :blk false;
                         }
 
                         break :blk true;
@@ -102,29 +102,47 @@ pub fn Scheduler(comptime T: type) type {
                     if (!all_inputs_ready) continue;
 
                     for (queue_item.inputs) |input_index| {
-                        const parent_queue_index = queue.getFromGraphIndex(input_index);
-                        const parent_buffer_index = queue.nodes[parent_queue_index].buffer_index;
+                        const parent_queue_item = queue.getFromGraphIndex(input_index);
+                        const parent_buffer_index = parent_queue_item.buffer_index;
 
                         if (parent_buffer_index != queue_item.buffer_index) {
                             // todo check for nulls here
-                            const parent_view = buffers.getView(parent_buffer_index.?);
-                            const child_view = buffers.getView(queue_item.buffer_index.?);
+                            var parent_view = buffers.getView(parent_buffer_index.?);
+                            var child_view = buffers.getView(queue_item.buffer_index.?);
 
                             try child_view.copyFrom(parent_view);
                             parent_view.zero();
                         }
                     }
 
-                    const node_buffer_view = buffers.getView(queue_item.buffer_index);
+                    const node_buffer_view = buffers.getView(queue_item.buffer_index.?);
 
                     // when to copy and when to share?
-                    const ctx = ProcessContext{ .buffer = &node_buffer_view };
+                    const ctx = ProcessContext{ .buffer = node_buffer_view };
                     graph_node.process(ctx);
 
                     self.audio_graph.updateNodeStatus(queue_item.graph_index, .processed);
                     processed_count += 1;
                 }
             }
+        }
+
+        pub fn getOutputBuffer(self: Self) ?audio_buffer.UnmanagedChannelView(T) {
+            const queue = self.topology_queue orelse return null;
+
+            const queue_last = queue.getLast();
+            const buffer_index = queue_last.buffer_index orelse return null;
+            var buffers = self.buffers orelse return null;
+
+            for (self.audio_graph.nodes.items) |*node| {
+                node.setStatus(.ready);
+            }
+
+            return buffers.getView(buffer_index);
+        }
+
+        pub fn blockSize(self: *Self) usize {
+            return @intFromEnum(self.buffers.?.opts.block_size);
         }
 
         // pub fn process(self: *Self) !void {

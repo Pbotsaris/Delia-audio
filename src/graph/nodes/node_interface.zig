@@ -29,7 +29,7 @@ pub fn GenericNode(comptime T: type) type {
 
         // ProcessContext does not own the buffer
         pub const ProcessContext = struct {
-            buffer: *audio_buffer.UnmanagedChannelView(T),
+            buffer: audio_buffer.UnmanagedChannelView(T),
         };
 
         pub const VTable = struct {
@@ -187,7 +187,7 @@ test "Test Processing Functionality" {
     buffer.writeSample(0, 3, input[3]);
 
     const ctx = GenNode.ProcessContext{
-        .buffer = &buffer,
+        .buffer = buffer,
     };
 
     node.process(ctx);

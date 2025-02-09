@@ -78,7 +78,7 @@ pub const Example = struct {
             };
 
             // could ignore this check
-            var audio_buffer = ctx.scheduler.buffer orelse {
+            var audio_buffer = ctx.scheduler.getOutputBuffer() orelse {
                 log.err("Buffer is null", .{});
                 return;
             };
