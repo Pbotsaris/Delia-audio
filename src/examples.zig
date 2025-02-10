@@ -35,7 +35,7 @@ pub const Example = struct {
             .sample_rate = sample_rate,
             .channels = .stereo,
             .stream_type = .playback,
-            .buffer_size = .bz_512,
+            .buffer_size = .buf_512,
             .ident = "hw:3,0",
         });
 
@@ -68,7 +68,6 @@ pub const Example = struct {
         const process_block_size = ctx.scheduler.blockSize();
 
         // could do extra checks between buffer size and process block size
-        // but don't want the extra overhead
         const iterations = @divFloor(buffer_size, process_block_size);
 
         for (iterations) |_| {

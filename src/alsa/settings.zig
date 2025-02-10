@@ -1,5 +1,6 @@
 const std = @import("std");
 const SampleRate = @import("../audio_specs.zig").SampleRate;
+const BufferSize = @import("../audio_specs.zig").BufferSize;
 
 const c_alsa = @cImport({
     @cInclude("alsa/asoundlib.h");
@@ -40,13 +41,13 @@ pub const Strategy = enum {
     min_available,
 };
 
-pub const BufferSize = enum(u32) {
-    bz_216 = 216,
-    bz_512 = 512,
-    bz_1024 = 1024,
-    bz_2048 = 2048,
-    bz_4096 = 4096,
-};
+//pub const BufferSize = enum(u32) {
+//    bz_216 = 216,
+//    bz_512 = 512,
+//    bz_1024 = 1024,
+//    bz_2048 = 2048,
+//    bz_4096 = 4096,
+//};
 
 pub const ChannelCount = enum(u32) {
     mono = 1,

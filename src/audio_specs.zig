@@ -3,12 +3,12 @@ const builtin = @import("builtin");
 
 pub const BufferSize = enum(usize) {
     const Self = @This();
-    buf_64 = 64,
     buf_128 = 128,
     buf_256 = 256,
     buf_512 = 512,
     buf_1024 = 1024,
     buf_2048 = 2048,
+    buf_4096 = 4096,
 
     pub inline fn toFloat(self: Self, T: type) T {
         return @floatFromInt(@as(usize, @intFromEnum(self)));
@@ -48,8 +48,8 @@ pub const SampleRate = enum(usize) {
 };
 
 test "AudioSpecs" {
-    const buf_64 = BufferSize.buf_64;
-    try std.testing.expectEqual(buf_64.toFloat(f32), 64.0);
+    const buf_64 = BufferSize.buf_1024;
+    try std.testing.expectEqual(buf_64.toFloat(f32), 1024.0);
 
     const blk_64 = BlockSize.blk_64;
     try std.testing.expectEqual(blk_64.toFloat(f32), 64.0);

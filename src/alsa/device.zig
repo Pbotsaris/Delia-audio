@@ -21,23 +21,24 @@ pub const Hardware = @import("Hardware.zig");
 pub const Format = @import("format.zig").Format;
 pub const Signedness = @import("settings.zig").Signedness;
 pub const ByteOrder = @import("settings.zig").ByteOrder;
-pub const BufferSize = @import("settings.zig").BufferSize;
 pub const FormatType = @import("settings.zig").FormatType;
 pub const AccessType = @import("settings.zig").AccessType;
 pub const StreamType = @import("settings.zig").StreamType;
 pub const Strategy = @import("settings.zig").Strategy;
-pub const SampleRate = @import("../audio_specs.zig").SampleRate;
 pub const ChannelCount = @import("settings.zig").ChannelCount;
 pub const Mode = @import("settings.zig").Mode;
 pub const StartThreshold = @import("settings.zig").StartThreshold;
 const GenericAudioData = @import("audio_data.zig").GenericAudioData;
+
+pub const SampleRate = @import("../audio_specs.zig").SampleRate;
+pub const BufferSize = @import("../audio_specs.zig").BufferSize;
 
 const DeviceOptions = struct {
     sample_rate: SampleRate = SampleRate.sr_44100,
     channels: ChannelCount = ChannelCount.stereo,
     stream_type: StreamType = StreamType.playback,
     ident: [:0]const u8 = "default",
-    buffer_size: BufferSize = BufferSize.bz_2048,
+    buffer_size: BufferSize = BufferSize.buf_1024,
     start_thresh: StartThreshold = StartThreshold.three_periods,
     timeout: i32 = -1,
     // not exposed to the user for now
@@ -134,71 +135,71 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         /// TODO: Description
         strategy: Strategy = Strategy.min_available,
 
-        //const DeviceOptionsFromHardware = struct {
-        //    mode: Mode = Mode.none,
-        //    buffer_size: BufferSize = BufferSize.bz_2048,
-        //    start_thresh: StartThreshold = StartThreshold.three_periods,
-        //    timeout: i32 = -1,
-        //    access_type: AccessType = AccessType.mmap_interleaved,
-        //    allow_resampling: bool = true,
-        //};
-        //
-        /// Initializes a `Device` using the provided `Hardware` configuration and additional options.
-        ///
-        /// This function retrieves the selected audio port from the `Hardware` instance and uses its
-        /// settings (e.g., sample rate, channel count, format) to configure the `Device`. If specific
-        /// settings are not available from the hardware, default values are used. The function then
-        /// calls the `init` function to configure the ALSA hardware parameters.
-        ///
-        /// # Parameters:
-        /// - `hardware`: The `Hardware` instance that provides information about the available audio ports.
-        /// - `inc_opts`: Additional options for configuring the `Device`, such as mode, buffer size,
-        ///   start threshold, timeout, access type, and whether resampling is allowed.
-        ///
-        /// # Returns:
-        /// - A `Device` instance configured based on the hardware settings and the provided options.
-        /// - Returns an error if the hardware or options cannot be used to initialize the device.
-        ///
-        /// # Errors:
-        /// - Returns an error if the selected audio port cannot be retrieved or if the device initialization fails.
-        //pub fn fromHardware(hardware: Hardware, inc_opts: DeviceOptionsFromHardware) !Self {
-        //    const port = try hardware.getSelectedAudioPort();
-        //
-        //    const opts = DeviceOptions{
-        //        .sample_rate = port.selected_settings.sample_rate orelse SampleRate.sr_44k100hz,
-        //        .channels = port.selected_settings.channels orelse ChannelCount.stereo,
-        //        .stream_type = port.stream_type orelse StreamType.playback,
-        //        .audio_format = port.selected_settings.format orelse FormatType.signed_16bits_little_endian,
-        //        .ident = port.identifier,
-        //        .buffer_size = inc_opts.buffer_size,
-        //        .start_thresh = inc_opts.start_thresh,
-        //        .timeout = inc_opts.timeout,
-        //        .allow_resampling = inc_opts.allow_resampling,
-        //    };
-        //
-        //    return try init(opts);
-        //}
+        const DeviceOptionsFromHardware = struct {
+            mode: Mode = Mode.none,
+            buffer_size: BufferSize = BufferSize.buf_1024,
+            start_thresh: StartThreshold = StartThreshold.three_periods,
+            timeout: i32 = -1,
+            // not exposed to the user for now
+            // access_type: AccessType = AccessType.mmap_interleaved,
+            allow_resampling: bool = true,
+        };
 
-        /// Initializes the ALSA device with the provided options and configures the hardware parameters.
-        ///
-        /// # Parameters:
-        /// - `opts`: A `DeviceOptions` structure containing various settings for the device, such as sample rate,
-        ///   channels, audio format, buffer size, period size, and more.
-        ///
-        /// # Returns:
-        /// - A `Device` instance configured and ready for playback or capture.
-        /// - Returns an error if the hardware parameters cannot be set or if the device initialization fails.
-        ///
-        /// # Hardware Configuration:
-        /// - `sample_rate`: Sets the desired sample rate. If the hardware cannot match the requested rate, an error is returned.
-        /// - `channels`: Configures the number of audio channels.
-        /// - `audio_format`: Sets the sample format (e.g., signed 16-bit little-endian).
-        /// - `buffer_size` and `hardware_buffer_size`: Configures the software and hardware buffer sizes, optimizing for latency.
-        /// - `hardware_period_size`: Defines the period size, determining the frequency of hardware interrupts.
-        ///
-        /// # Errors:
-        /// - Returns an error if the PCM device cannot be opened, if the hardware parameters cannot be set,
-        ///   or if there is a mismatch between the requested and actual sample rate.
+        // Initializes a `Device` using the provided `Hardware` configuration and additional options.
+        //
+        // This function retrieves the selected audio port from the `Hardware` instance and uses its
+        // settings (e.g., sample rate, channel count, format) to configure the `Device`. If specific
+        // settings are not available from the hardware, default values are used. The function then
+        // calls the `init` function to configure the ALSA hardware parameters.
+        //
+        // # Parameters:
+        // - `hardware`: The `Hardware` instance that provides information about the available audio ports.
+        // - `inc_opts`: Additional options for configuring the `Device`, such as mode, buffer size,
+        //   start threshold, timeout, access type, and whether resampling is allowed.
+        //
+        // # Returns:
+        // - A `Device` instance configured based on the hardware settings and the provided options.
+        // - Returns an error if the hardware or options cannot be used to initialize the device.
+        //
+        // # Errors:
+        // - Returns an error if the selected audio port cannot be retrieved or if the device initialization fails.
+        pub fn fromHardware(hardware: Hardware, inc_opts: DeviceOptionsFromHardware) !Self {
+            const port = try hardware.getSelectedAudioPort();
+
+            const opts = DeviceOptions{
+                .sample_rate = port.selected_settings.sample_rate orelse SampleRate.sr_44100,
+                .channels = port.selected_settings.channels orelse ChannelCount.stereo,
+                .stream_type = port.stream_type orelse StreamType.playback,
+                .ident = port.identifier,
+                .buffer_size = inc_opts.buffer_size,
+                .start_thresh = inc_opts.start_thresh,
+                .timeout = inc_opts.timeout,
+                .allow_resampling = inc_opts.allow_resampling,
+            };
+
+            return try init(opts);
+        }
+
+        // Initializes the ALSA device with the provided options and configures the hardware parameters.
+        //
+        // # Parameters:
+        // - `opts`: A `DeviceOptions` structure containing various settings for the device, such as sample rate,
+        //   channels, audio format, buffer size, period size, and more.
+        //
+        // # Returns:
+        // - A `Device` instance configured and ready for playback or capture.
+        // - Returns an error if the hardware parameters cannot be set or if the device initialization fails.
+        //
+        // # Hardware Configuration:
+        // - `sample_rate`: Sets the desired sample rate. If the hardware cannot match the requested rate, an error is returned.
+        // - `channels`: Configures the number of audio channels.
+        // - `audio_format`: Sets the sample format (e.g., signed 16-bit little-endian).
+        // - `buffer_size` and `hardware_buffer_size`: Configures the software and hardware buffer sizes, optimizing for latency.
+        // - `hardware_period_size`: Defines the period size, determining the frequency of hardware interrupts.
+        //
+        // # Errors:
+        // - Returns an error if the PCM device cannot be opened, if the hardware parameters cannot be set,
+        //   or if there is a mismatch between the requested and actual sample rate.
         pub fn init(opts: DeviceOptions) DeviceHardwareError!Self {
             var pcm_handle: ?*c_alsa.snd_pcm_t = null;
             var params: ?*c_alsa.snd_pcm_hw_params_t = null;
@@ -347,7 +348,9 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         ///
         /// - `strategy`: Specifies the data transfer strategy to be used.
         ///   - `Strategy.period_event`:
-        ///      # TODO
+        ///     - Enables ALSA period events, allowing the application to receive notifications when
+        ///       a period boundary is reached. This strategy is ideal for applications that need precise
+        ///       timing and low-latency handling, as it relies on events instead of polling or buffering.
         ///   - `Strategy.min_available`:
         ///     - Sets `avail_min` to the size of the period buffer, meaning the application will
         ///       handle data transfer when there is enough space in the buffer for a full period.
@@ -374,8 +377,7 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
 
             // If we are using period_event strategy, we set the avail_min to the hardware buffer size
             // essentially disabling this mechanism in favor of polling for period events
-            const min_size =
-                if (strategy == Strategy.period_event) self.hardware_buffer_size else @intFromEnum(self.buffer_size);
+            const min_size = if (strategy == Strategy.period_event) self.hardware_buffer_size else @intFromEnum(self.buffer_size);
 
             err = c_alsa.snd_pcm_sw_params_set_avail_min(self.pcm_handle, self.sw_params, min_size);
 

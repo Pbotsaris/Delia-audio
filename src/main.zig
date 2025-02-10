@@ -15,15 +15,23 @@ pub const std_options = .{
 
 const log = std.log.scoped(.main);
 
-pub fn main() !void {
+fn examplePlaybackAndGraph() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     var e = try ex.Example.init(allocator, audio_specs.SampleRate.sr_44100);
 
     try e.prepare();
     try e.run();
-
     try e.deinit();
+}
+
+pub fn main() !void {
+    // examplePlaybackAndGraph() catch |err| {
+    //     log.err("{s}", .{err});
+    //     return err;
+    // };
+
+    alsa_examples.usingHardwareToInitDevice();
 }
 
 test {
