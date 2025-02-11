@@ -31,7 +31,7 @@ pub const Example = struct {
     device: Device,
 
     pub fn init(allocator: std.mem.Allocator, sample_rate: specs.SampleRate) !Example {
-        const dev = try Device.init(.{
+        const dev = try Device.init(allocator, .{
             .sample_rate = sample_rate,
             .channels = .stereo,
             .stream_type = .playback,
@@ -96,6 +96,7 @@ pub const Example = struct {
     }
 
     pub fn deinit(self: *Self) !void {
+        self.device.deinit();
         self.scheduler.deinit();
         try self.device.deinit();
     }

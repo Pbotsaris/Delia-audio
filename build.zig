@@ -1,5 +1,10 @@
 const std = @import("std");
 
+const AudioBackend = enum {
+    alsa,
+    jack,
+};
+
 const Deps = struct {
     const Self = @This();
 
@@ -47,6 +52,7 @@ const Deps = struct {
     }
 };
 
+// build and statically link the alsa library
 const alsa = Deps{
     .name = "Alsa",
     .src_dir = "vendor/alsa",
@@ -54,9 +60,41 @@ const alsa = Deps{
     .include_dir = "include",
 };
 
+fn pathExists(p: []const u8) bool {
+    std.fs.cwd().access(p, .{}) catch {
+        return false;
+    };
+
+    return true;
+}
+
+fn detectLinuxAudioBackend() AudioBackend {
+    const jack_paths = &[_][]const u8{
+        "/usr/lib/libjack.so",
+        "/usr/local/lib/libjack.so",
+        "/usr/lib64/libjack.so",
+    };
+
+    for (jack_paths) |path| {
+        if (pathExists(path)) {
+            std.log.info("JACK library found at: {s}", .{path});
+            return .jack;
+        }
+    }
+
+    std.log.info("JACK library not found. Falling back to ALSA.", .{});
+    return .alsa;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    // Audio backend selection
+    const backend = detectLinuxAudioBackend();
+
+    const options = b.addOptions();
+    options.addOption(AudioBackend, "audio_backend", backend);
 
     ////////////////////////// BUILD //////////////////////////////////////////////
     const exe = b.addExecutable(.{
@@ -66,7 +104,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // alsa
+    // ALSA: in vendor/alsa
     alsa.install(b);
 
     const alsa_include_path = alsa.joinIncludePath(b);
@@ -74,6 +112,17 @@ pub fn build(b: *std.Build) void {
 
     exe.addIncludePath(alsa_include_path);
     exe.addObjectFile(alsa_lib_path);
+
+    // JACK2: headers in vendor/jack2
+    // Libary must be dynamically linked as library is shared by both server and clients
+    // If system does not have jack2 installed, we fall back to pulse audio then ALSA
+
+    // Add the path to the JACK headers from the submodule
+    if (backend == .jack) {
+        exe.addIncludePath(b.path("vendor/jack"));
+        // Dynamically link to the JACK shared library
+        exe.linkSystemLibrary("jack");
+    }
 
     exe.linkLibC();
     b.installArtifact(exe);
@@ -90,6 +139,8 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    exe.root_module.addOptions("audio_backend", options);
+
     ////////////////////////// CHECK //////////////////////////////////////////////
 
     const exe_check = b.addExecutable(.{
@@ -99,9 +150,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    exe_check.root_module.addOptions("audio_backend", options);
+
     exe_check.addIncludePath(alsa_include_path);
     exe_check.addObjectFile(alsa_lib_path);
     exe_check.linkLibC();
+
+    if (backend == .jack) {
+        exe_check.addIncludePath(b.path("vendor/jack"));
+        exe_check.linkSystemLibrary("jack");
+    }
 
     const check = b.step("check", "Check if the app compile");
     check.dependOn(&exe_check.step);
@@ -127,24 +185,22 @@ pub fn build(b: *std.Build) void {
 
     //////////////// TESTS////////////////////////////////////////////////
 
-    // step for running unit tests
-    //   const lib_unit_tests = b.addTest(.{
-    //       .root_source_file = b.path("src/root.zig"),
-    //       .target = target,
-    //       .optimize = optimize,
-    //   });
-
-    //   const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
-
     const exe_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
 
+    exe_unit_tests.root_module.addOptions("audio_backend", options);
+
     exe_unit_tests.addIncludePath(alsa_include_path);
     exe_unit_tests.addObjectFile(alsa_lib_path);
     exe_unit_tests.linkLibC();
+
+    if (backend == .jack) {
+        exe_unit_tests.addIncludePath(b.path("vendor/jack"));
+        exe_unit_tests.linkSystemLibrary("jack");
+    }
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

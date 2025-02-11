@@ -8,6 +8,8 @@ const audio_specs = @import("audio_specs.zig");
 const alsa_examples = @import("alsa/examples/examples.zig");
 const ex = @import("examples.zig");
 
+const audio_backend = @import("audio_backend");
+
 pub const std_options = .{
     .log_level = .debug,
     .logFn = @import("logging.zig").logFn,
@@ -31,7 +33,8 @@ pub fn main() !void {
     //     return err;
     // };
 
-    alsa_examples.usingHardwareToInitDevice();
+    //   alsa_examples.usingHardwareToInitDevice();
+    std.debug.print("audio_backend: {any}\n", .{audio_backend.audio_backend});
 }
 
 test {

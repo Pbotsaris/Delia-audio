@@ -56,7 +56,7 @@ pub const DeviceHardwareError = error{
     sample_rate,
     buffer_size,
     hardware_params,
-};
+} || std.mem.Allocator.Error;
 
 pub const DeviceSoftwareError = error{
     software_params,
@@ -65,7 +65,7 @@ pub const DeviceSoftwareError = error{
     set_start_threshold,
     set_period_event,
     prepare,
-};
+} || std.mem.Allocator.Error;
 
 pub const AudioLoopError = error{
     start,
@@ -92,6 +92,7 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         const Self = @This();
         // this constant will is the multiplier that will define the size of the hardware buffer size.
         //  hardware_buffer_size = user_defined_buffer_size * NB_PERIODS
+        //  TODO: Maybe expose this as setting
         pub const NB_PERIODS = 5;
 
         // defined at compile time for this device type
@@ -135,6 +136,10 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         /// TODO: Description
         strategy: Strategy = Strategy.min_available,
 
+        // Use RW transfers that require a buffer to store the data
+        transfer_buffer: []u8 = undefined,
+        allocator: std.mem.Allocator,
+
         const DeviceOptionsFromHardware = struct {
             mode: Mode = Mode.none,
             buffer_size: BufferSize = BufferSize.buf_1024,
@@ -163,7 +168,7 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         //
         // # Errors:
         // - Returns an error if the selected audio port cannot be retrieved or if the device initialization fails.
-        pub fn fromHardware(hardware: Hardware, inc_opts: DeviceOptionsFromHardware) !Self {
+        pub fn fromHardware(allocator: std.mem.Allocator, hardware: Hardware, inc_opts: DeviceOptionsFromHardware) !Self {
             const port = try hardware.getSelectedAudioPort();
 
             const opts = DeviceOptions{
@@ -177,7 +182,7 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
                 .allow_resampling = inc_opts.allow_resampling,
             };
 
-            return try init(opts);
+            return try init(allocator, opts);
         }
 
         // Initializes the ALSA device with the provided options and configures the hardware parameters.
@@ -200,7 +205,7 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         // # Errors:
         // - Returns an error if the PCM device cannot be opened, if the hardware parameters cannot be set,
         //   or if there is a mismatch between the requested and actual sample rate.
-        pub fn init(opts: DeviceOptions) DeviceHardwareError!Self {
+        pub fn init(allocator: std.mem.Allocator, opts: DeviceOptions) DeviceHardwareError!Self {
             var pcm_handle: ?*c_alsa.snd_pcm_t = null;
             var params: ?*c_alsa.snd_pcm_hw_params_t = null;
             var sample_rate: u32 = @intCast(@intFromEnum(opts.sample_rate));
@@ -323,6 +328,9 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
                 return DeviceHardwareError.buffer_size;
             }
 
+            const frame_size: usize = @intFromEnum(opts.channels) * @sizeOf(T);
+            const buffer_bytes: usize = frame_size * @intFromEnum(opts.buffer_size);
+
             return Self{
                 .pcm_handle = pcm_handle,
                 .hw_params = params,
@@ -336,6 +344,9 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
                 .hardware_buffer_size = @as(u32, @intCast(hardware_buffer_size)),
                 .hardware_period_size = @as(u32, @intCast(hardware_period_size)),
                 .audio_format = Format(T).init(FORMAT_TYPE),
+                .allocator = allocator,
+                // TOOD: see if we still need this buffer
+                .transfer_buffer = try allocator.alloc(u8, buffer_bytes),
             };
         }
 
@@ -343,6 +354,8 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         /// Prepares the ALSA device for playback or capture using the specified strategy.
         /// This function configures the software parameters of the ALSA device, including the
         /// method by which audio data will be transferred to or from the hardware.
+        ///
+        /// TODO: Maybe remove the period_event strategy and just use min_available
         ///
         /// # Parameters:
         ///
@@ -413,6 +426,8 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
                 log.err("Failed to prepare Audio Interface: {s}", .{c_alsa.snd_strerror(err)});
                 return DeviceSoftwareError.prepare;
             }
+
+            self.strategy = strategy;
         }
 
         pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -420,18 +435,20 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
             _ = options;
 
             try writer.print("\nDevice\n", .{});
-            try writer.print("  Stream Type:     {s}\n", .{@tagName(self.stream_type)});
-            try writer.print("  Access Type:     {s}\n", .{@tagName(self.access_type)});
-            try writer.print("  Sample Rate:     {d}hz\n", .{self.sample_rate});
-            try writer.print("  Channels:        {d}\n", .{self.channels});
-            try writer.print("  Buffer Size:     {d} bytes\n", .{@intFromEnum(self.buffer_size)});
-            try writer.print("  HW Buffer Size:  {d} bytes\n", .{self.hardware_buffer_size});
-            try writer.print("  Timeout:         {d}ms\n", .{self.timeout});
-            try writer.print("  Open Mode:       {s}\n", .{@tagName(self.mode)});
+            try writer.print("  Stream Type:        {s}\n", .{@tagName(self.stream_type)});
+            try writer.print("  Access Type:        {s}\n", .{@tagName(self.access_type)});
+            try writer.print("  Sample Rate:        {d}hz\n", .{self.sample_rate});
+            try writer.print("  Channels:           {d}\n", .{self.channels});
+            try writer.print("  Buffer Size:        {d} frames\n", .{@intFromEnum(self.buffer_size)});
+            try writer.print("  HW Buffer Size:     {d} frames\n", .{self.hardware_buffer_size});
+            try writer.print("  Timeout:            {d}ms\n", .{if (self.timeout < 0) 0 else self.timeout});
+            try writer.print("  Open Mode:          {s}\n", .{@tagName(self.mode)});
+            try writer.print("  Transfer Buff Size: {d} bytes\n", .{self.transfer_buffer.len});
             try writer.print("{s}\n", .{self.audio_format});
         }
 
         pub fn deinit(self: *Self) !void {
+            self.allocator.free(self.transfer_buffer);
             c_alsa.snd_pcm_hw_params_free(self.hw_params);
             c_alsa.snd_pcm_sw_params_free(self.sw_params);
 
@@ -497,6 +514,9 @@ fn GenericAudioLoop(comptime format_type: FormatType, ContextType: type) type {
             }
         }
 
+        // TODO write a simple write loop for non-mmap access types
+        //    fn blockingWrite(self: *Self) !void {}
+
         fn directWrite(self: *Self) !void {
             const buffer_size: c_ulong = @intFromEnum(self.device.buffer_size);
             var maybe_areas: ?*c_alsa.snd_pcm_channel_area_t = null;
@@ -513,6 +533,7 @@ fn GenericAudioLoop(comptime format_type: FormatType, ContextType: type) type {
                         try self.xrunRecovery(-c_alsa.EPIPE);
                         stopped = true;
                     },
+
                     c_alsa.SND_PCM_STATE_SUSPENDED => try self.xrunRecovery(-c_alsa.ESTRPIPE),
 
                     else => {

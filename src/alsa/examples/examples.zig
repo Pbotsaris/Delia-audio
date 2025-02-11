@@ -30,7 +30,12 @@ const PlaybackContext = struct {
 };
 
 pub fn playbackSineWave() void {
-    var dev = Device.init(.{
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
+
+    const allocator = gpa.allocator();
+
+    var dev = Device.init(allocator, .{
         .sample_rate = .sr_44100,
         .channels = .stereo,
         .stream_type = .playback,
@@ -39,6 +44,10 @@ pub fn playbackSineWave() void {
     }) catch |err| {
         log.err("Failed to init device: {}", .{err});
         return;
+    };
+
+    defer dev.deinit() catch |err| {
+        log.err("Failed to deinit device: {}", .{err});
     };
 
     dev.prepare(.min_available) catch |err| {
@@ -129,7 +138,7 @@ pub fn usingHardwareToInitDevice() void {
     //  The hardware object will provide the basic info to initialize the device
     //  but it is possible to configure the device with more options.
     //  Below an example of setting the buffer size and access type
-    var device = Device.fromHardware(hardware, .{ .buffer_size = .buf_1024 }) catch |err| {
+    var device = Device.fromHardware(allocator, hardware, .{ .buffer_size = .buf_1024 }) catch |err| {
         log.err("Failed to init device: {}", .{err});
         return;
     };
@@ -179,7 +188,7 @@ pub fn manuallyInitializingDevice() void {
     // playback.supported_settings.?.sample_rates
 
     // device will fail if settings are not supported by the hardware
-    var device = alsa.Device.init(.{
+    var device = alsa.Device.init(allocator, .{
         // you must provide sample rate, chnanels, format and steam type.
         .sample_rate = .sr_44100,
         .channels = .stereo,
