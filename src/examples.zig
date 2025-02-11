@@ -1,5 +1,5 @@
 const std = @import("std");
-const alsa = @import("alsa/alsa.zig");
+const alsa = @import("backends//backends.zig").alsa;
 const dsp = @import("dsp/dsp.zig");
 const graph = @import("graph/graph.zig");
 const specs = @import("audio_specs.zig");

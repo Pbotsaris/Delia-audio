@@ -30,8 +30,8 @@ pub const Mode = @import("settings.zig").Mode;
 pub const StartThreshold = @import("settings.zig").StartThreshold;
 const GenericAudioData = @import("audio_data.zig").GenericAudioData;
 
-pub const SampleRate = @import("../audio_specs.zig").SampleRate;
-pub const BufferSize = @import("../audio_specs.zig").BufferSize;
+pub const SampleRate = @import("../../audio_specs.zig").SampleRate;
+pub const BufferSize = @import("../../audio_specs.zig").BufferSize;
 
 const DeviceOptions = struct {
     sample_rate: SampleRate = SampleRate.sr_44100,

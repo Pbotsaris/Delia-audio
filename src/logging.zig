@@ -13,6 +13,8 @@ pub fn logFn(
         .main,
         .alsa,
         .dsp,
+        .jack,
+        .graph,
         std.log.default_log_scope,
         => @tagName(scope),
         else => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
