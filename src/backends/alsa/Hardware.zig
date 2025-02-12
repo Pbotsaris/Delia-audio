@@ -3,9 +3,6 @@
 //! and ports. This struct interacts with the ALSA API to gather and manage
 //! information about available audio cards and their capabilities.
 //!
-//! The `Hardware` struct should be initialized once during the application
-//! lifecycle and should be deinitialized when no longer needed to free up
-//! resources.
 const std = @import("std");
 const log = std.log.scoped(.alsa);
 const utils = @import("../../utils/utils.zig");
@@ -238,7 +235,7 @@ pub fn selectAudioPortBy(self: *Hardware, stream_type: StreamType, by: FindBy, p
     const port = AudioCard.findBy(ports, by, pattern);
 
     if (port) |p| {
-        self.selected_port = @as(usize, @intCast(p.index));
+        self.selected_port = try selected_card.getIndexOf(stream_type, p.identifier);
         self.selected_stream_type = stream_type;
         return;
     }
@@ -536,4 +533,81 @@ test "selectAudioPortAt and selectAudioPortByIdent select correct port or return
 
     const result2 = hardware.selectAudioPortByIdent(StreamType.playback, "invalid_id");
     try std.testing.expectError(HardwareError.invalid_identifier, result2);
+}
+
+test "selectAudioPortBy selects correct port or returns errors" {
+    const allocator = std.testing.allocator;
+    const AudioCardInfo = AudioCard.AudioCardInfo;
+
+    // Mocking the Hardware and AudioCard setup
+    var hardware = Hardware{
+        .cards = std.ArrayList(AudioCard).init(allocator),
+        .allocator = allocator,
+    };
+    defer hardware.deinit();
+
+    // Mock AudioCard with playbacks and captures
+    var card = AudioCard.init(
+        allocator,
+        try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "audiocard_id", "Card 1"),
+    );
+
+    // Manually add playback and capture ports to avoid ALSA API calls
+    try card.playbacks.append(
+        try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "playback_id", "Playback 1"),
+    );
+    try card.captures.append(
+        try AudioCardInfo.init(allocator, .{ .card = 0, .device = 1 }, "capture_id", "Capture 1"),
+    );
+
+    // Add card to hardware
+    try hardware.cards.append(card);
+
+    try hardware.selectAudioPortBy(StreamType.playback, FindBy.id, "playback_id");
+    try std.testing.expectEqual(0, hardware.selected_port);
+    try std.testing.expectEqual(StreamType.playback, hardware.selected_stream_type);
+
+    try hardware.selectAudioPortBy(StreamType.capture, FindBy.id, "capture_id");
+    try std.testing.expectEqual(0, hardware.selected_port);
+    try std.testing.expectEqual(StreamType.capture, hardware.selected_stream_type);
+
+    const result = hardware.selectAudioPortBy(StreamType.playback, FindBy.id, "invalid_id");
+    try std.testing.expectError(HardwareError.card_not_found, result);
+}
+
+test "findCardBy finds correct card or returns null" {
+    const allocator = std.testing.allocator;
+    const AudioCardInfo = AudioCard.AudioCardInfo;
+
+    // Mocking the Hardware and AudioCard setup
+    var hardware = Hardware{
+        .cards = std.ArrayList(AudioCard).init(allocator),
+        .allocator = allocator,
+    };
+    defer hardware.deinit();
+
+    try hardware.cards.append(
+        AudioCard.init(
+            allocator,
+            try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "someid1", "Card 1"),
+        ),
+    );
+
+    try hardware.cards.append(
+        AudioCard.init(
+            allocator,
+            try AudioCardInfo.init(allocator, .{ .card = 1, .device = 0 }, "someid2", "Card 2"),
+        ),
+    );
+
+    const card1 = hardware.findCardBy(FindBy.id, "someid1");
+    try std.testing.expect(card1 != null);
+    try std.testing.expectEqualStrings("Card 1", card1.?.details.name);
+
+    const card2 = hardware.findCardBy(FindBy.name, "Card 2");
+    try std.testing.expect(card2 != null);
+    try std.testing.expectEqualStrings("Card 2", card2.?.details.name);
+
+    const noCard = hardware.findCardBy(FindBy.id, "nonexistent");
+    try std.testing.expect(noCard == null);
 }

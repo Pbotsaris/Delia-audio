@@ -12,9 +12,9 @@ const Device = alsa.device.GenericDevice(.signed_16bits_little_endian, PlaybackC
 
 const PlaybackContext = struct {
     const Self = @This();
-    w: wave.Wave(f32).init(100.0, 0.2, 48000.0),
+    w: wave.Wave(f32) = wave.Wave(f32).init(100.0, 0.2, 48000.0),
 
-    fn callback(self: *Self, data: Device.AudioDataType()) void {
+    pub fn callback(self: *Self, data: Device.AudioDataType()) void {
         self.w.setSampleRate(@floatFromInt(data.sample_rate));
 
         for (0..data.totalSampleCount()) |_| {
@@ -56,7 +56,7 @@ pub fn playbackSineWave() void {
 
     var ctx = PlaybackContext{ .w = wave.Wave(f32).init(100.0, 0.2, 48000.0) };
 
-    dev.start(&ctx, ctx.callback) catch |err| {
+    dev.start(&ctx, @field(PlaybackContext, "callback")) catch |err| {
         log.err("Failed to start device: {}", .{err});
     };
 }
@@ -233,12 +233,11 @@ pub fn manuallyInitializingDevice() void {
     // playback.supported_settings.?.sample_rates
 
     // device will fail if settings are not supported by the hardware
-    var device = alsa.Device.init(allocator, .{
+    var device = Device.init(allocator, .{
         // you must provide sample rate, chnanels, format and steam type.
         .sample_rate = .sr_44100,
         .channels = .stereo,
         .stream_type = .playback,
-        .audio_format = .signed_16bits_little_endian,
         .ident = playback.identifier,
     }) catch |err| {
         std.debug.print("Failed to init device: {}", .{err});
