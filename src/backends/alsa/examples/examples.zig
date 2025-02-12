@@ -96,8 +96,6 @@ pub fn findingCardAndPortBy() void {
     const found_card = hardware.findCardBy(.name, "webcam");
 
     if (found_card) |card| {
-        // std.debug.print("Card: {}", .{card});
-
         // webcams don't have playback ports, generally :)
         const found_port = card.findCaptureBy(.name, "USB");
 
@@ -136,12 +134,31 @@ pub fn usingHardwareToInitDevice() void {
     //
 
     // select the audio card and port you want to use
-    hardware.selectAudioCardAt(3) catch |err| {
+
+    // by index
+    // hardware.selectAudioCardAt(3) catch |err| {
+    //     log.err("Failed to select audio card: {}", .{err});
+    //     return;
+    // };
+
+    // or by name / alsa id. Harware attempts to match the name with the card's name or id
+    // Replace "Audio" with the name of your card
+    hardware.selectAudioCardBy(.name, "Audio") catch |err| {
         log.err("Failed to select audio card: {}", .{err});
         return;
     };
 
-    hardware.selectAudioPortAt(.playback, 0) catch |err| {
+    // by index
+    // hardware.selectAudioPortAt(.playback, 0) catch |err| {
+    //     log.err("Failed to select audio port: {}", .{err});
+    //     return;
+    // };
+
+    // or again by name / alsa id. Note that this function will return the first match
+    // For my audio Card for Example the Ports are all called USB Audio #1, USB Audio #2, etc
+    //  So I need to be specific
+    //  Replace "USB Audio #1" with the name of your port
+    hardware.selectAudioPortBy(.playback, .name, "USB Audio #1") catch |err| {
         log.err("Failed to select audio port: {}", .{err});
         return;
     };

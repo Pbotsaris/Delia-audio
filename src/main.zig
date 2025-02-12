@@ -33,7 +33,7 @@ pub fn main() !void {
     //     return err;
     // };
 
-    backends.alsa.examples.findingCardAndPortBy();
+    backends.alsa.examples.usingHardwareToInitDevice();
     //  std.debug.print("audio_backend: {any}\n", .{audio_backend.audio_backend});
 
     //  const dev = Device.init(.{

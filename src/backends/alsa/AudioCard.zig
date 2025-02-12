@@ -33,7 +33,7 @@ const Identifier = struct {
     card: c_int,
 };
 
-const FindBy = enum {
+pub const FindBy = enum {
     name,
     id,
 };

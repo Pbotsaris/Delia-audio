@@ -1,4 +1,4 @@
-//! `Hardware` manages ALSA audio cards and ports on the system.
+//! `Hardware` manages ALSA audio cards and ports on identifier system.
 //! It handles the initialization, selection, and configuration of audio cards
 //! and ports. This struct interacts with the ALSA API to gather and manage
 //! information about available audio cards and their capabilities.
@@ -30,10 +30,7 @@ const HardwareError = error{
     invalid_identifier,
 };
 
-const FindBy = enum {
-    name,
-    identifier,
-};
+const FindBy = AudioCard.FindBy;
 
 /// A list of audio cards detected on the system.
 cards: std.ArrayList(AudioCard),
@@ -88,7 +85,7 @@ pub fn findCardBy(self: Hardware, by: FindBy, pattern: []const u8) ?AudioCard {
     for (self.cards.items) |card| {
         const haystack = switch (by) {
             FindBy.name => card.details.name,
-            FindBy.identifier => card.details.id,
+            FindBy.id => card.details.id,
         };
 
         const matches = utils.findPattern(
@@ -142,6 +139,33 @@ pub fn selectAudioCardAt(self: *Hardware, at: usize) !void {
     }
 
     self.selected_card = at;
+}
+
+/// Selects an audio card by matching a pattern to `.name` or `id`.
+/// - `by`: The field to search for the pattern.
+/// - `pattern`: The pattern to search for.
+/// - Errors: Returns an error if no matching card is found.
+/// - Returns: The first `AudioCard` that matches the pattern.
+pub fn selectAudioCardBy(self: *Hardware, by: FindBy, pattern: []const u8) !void {
+    for (self.cards.items, 0..) |card, i| {
+        const haystack = switch (by) {
+            FindBy.name => card.details.name,
+            FindBy.id => card.details.id,
+        };
+
+        const matches = utils.findPattern(
+            haystack,
+            pattern,
+            .{ .case_sensitive = false },
+        );
+
+        if (matches) |_| {
+            self.selected_card = i;
+            return;
+        }
+    }
+
+    return HardwareError.card_not_found;
 }
 
 /// Selects an audio card by its identifier(e.g. `hw:0`).
@@ -201,9 +225,30 @@ pub fn selectAudioPortByIdent(self: *Hardware, stream_type: StreamType, ident: [
     self.selected_stream_type = stream_type;
 }
 
+pub fn selectAudioPortBy(self: *Hardware, stream_type: StreamType, by: FindBy, pattern: []const u8) !void {
+    try errWhenEmpty(self.cards.items.len);
+
+    const selected_card = self.cards.items[self.selected_card];
+
+    const ports = switch (stream_type) {
+        StreamType.capture => selected_card.captures,
+        StreamType.playback => selected_card.playbacks,
+    };
+
+    const port = AudioCard.findBy(ports, by, pattern);
+
+    if (port) |p| {
+        self.selected_port = @as(usize, @intCast(p.index));
+        self.selected_stream_type = stream_type;
+        return;
+    }
+
+    return HardwareError.card_not_found;
+}
+
 /// Retrieves the currently selected `AudioCard`.
-///
 /// - Returns: The currently selected `AudioCard`.
+///
 /// - Errors: Returns an error if no cards are available.
 pub fn getSelectedAudioCard(self: Hardware) HardwareError!AudioCard {
     try errWhenEmpty(self.cards.items.len);
