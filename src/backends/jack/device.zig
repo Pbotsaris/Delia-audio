@@ -47,6 +47,10 @@ pub const JackOpenOptions = struct {
     }
 };
 
+const JackPorts = struct {
+    name: []const u8,
+};
+
 const DeviceOptions = struct {
     client_name: []const u8 = "device",
     server_name: ?[]const u8 = null,
@@ -103,16 +107,19 @@ pub fn GenericDevice(comptime T: type) type {
             }
 
             if ((open_status & c_jack.JackServerStarted) != 0) {
-                std.log.info("JACK server started", .{});
+                std.log.info("JACK server was stopped. Starting server...", .{});
             }
+
+            var maybe_new_name: ?[]const u8 = null;
 
             if ((open_status & c_jack.JackNameNotUnique) != 0) {
                 const new_name = c_jack.jack_get_client_name(client);
                 std.log.warn("Client name: {s} not unique. New name generated and assigned: {s}", .{ opts.client_name, new_name });
+                maybe_new_name = std.mem.span(new_name);
             }
 
             return .{
-                .client_name = opts.client_name,
+                .client_name = maybe_new_name orelse opts.client_name,
                 .server_name = opts.server_name,
                 .client = client,
             };

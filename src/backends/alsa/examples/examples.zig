@@ -80,6 +80,34 @@ pub fn printingHardwareInfo() void {
     std.debug.print("{s}", .{hardware});
 }
 
+pub fn findingCardAndPortBy() void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
+
+    const allocator = gpa.allocator();
+
+    var hardware = alsa.Hardware.init(allocator) catch |err| {
+        log.err("Failed to start device: {}", .{err});
+        return;
+    };
+
+    defer hardware.deinit();
+
+    const found_card = hardware.findCardBy(.name, "webcam");
+
+    if (found_card) |card| {
+        // std.debug.print("Card: {}", .{card});
+
+        // webcams don't have playback ports, generally :)
+        const found_port = card.findCaptureBy(.name, "USB");
+
+        std.debug.print("{?}", .{found_port});
+        return;
+    }
+
+    std.debug.print("Card not found", .{});
+}
+
 //This example shows how to use the hardware object to initialize a device
 pub fn usingHardwareToInitDevice() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

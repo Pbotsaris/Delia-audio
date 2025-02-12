@@ -8,6 +8,8 @@
 //! resources.
 const std = @import("std");
 const log = std.log.scoped(.alsa);
+const utils = @import("../../utils/utils.zig");
+
 const AlsaError = @import("error.zig").AlsaError;
 const FormatType = @import("settings.zig").FormatType;
 const StreamType = @import("settings.zig").StreamType;
@@ -26,6 +28,11 @@ const HardwareError = error{
     cards_out_of_bounds,
     card_not_found,
     invalid_identifier,
+};
+
+const FindBy = enum {
+    name,
+    identifier,
 };
 
 /// A list of audio cards detected on the system.
@@ -71,6 +78,30 @@ pub fn getAudioCardAt(self: Hardware, at: usize) HardwareError!AudioCard {
     }
 
     return self.cards.items[at];
+}
+
+/// Searches for `AudioCard` by matching a pattern to `.name` or `id`.
+///  - `by`: The field to search for the pattern.
+///  - `pattern`: The pattern to search for.
+///  - Returns: The first `AudioCard` that matches the pattern or `null` if no match is found.
+pub fn findCardBy(self: Hardware, by: FindBy, pattern: []const u8) ?AudioCard {
+    for (self.cards.items) |card| {
+        const haystack = switch (by) {
+            FindBy.name => card.details.name,
+            FindBy.identifier => card.details.id,
+        };
+
+        const matches = utils.findPattern(
+            haystack,
+            pattern,
+            .{ .case_sensitive = false },
+        );
+
+        // return the first match
+        if (matches) |_| return card;
+    }
+
+    return null;
 }
 
 /// Retrieves an `AudioCard` by its identifier.
