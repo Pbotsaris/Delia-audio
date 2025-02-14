@@ -16,7 +16,7 @@ const format = alsa.device.FormatType.signed_16bits_little_endian;
 
 // Create a device time for this given format and struct that will server as the context
 // for the callback
-const Device = alsa.device.GenericDevice(format, Example);
+const Device = alsa.device.HalfDuplexDevice(format, Example);
 const AudioDataType = Device.AudioDataType();
 
 // get the float for the given audio format
@@ -96,7 +96,7 @@ pub const Example = struct {
     }
 
     pub fn deinit(self: *Self) !void {
-        self.device.deinit();
+        try self.device.deinit();
         self.scheduler.deinit();
         try self.device.deinit();
     }

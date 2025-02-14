@@ -25,6 +25,7 @@ const HardwareError = error{
     cards_out_of_bounds,
     card_not_found,
     invalid_identifier,
+    no_port_counterpart_available,
 };
 
 const FindBy = AudioCard.FindBy;
@@ -266,6 +267,32 @@ pub fn getSelectedAudioPort(self: Hardware) !AudioCard.AudioCardInfo {
     }
 
     return try card.getCaptureAt(self.selected_port);
+}
+/// Retrieves the counterpart of the currently selected audio port.
+///
+/// If the selected port is a capture port, this function attempts to find the corresponding playback port
+/// with the same identifier, and vice versa. This allows for identifying the paired input/output device
+/// on hardware that supports simultaneous capture and playback.
+///
+/// # Returns:
+/// - The `AudioCard.AudioCardInfo` of the counterpart port.
+/// - An error if no cards are available or if the hardware does not support both playback and capture on the same card.
+pub fn getSelectedAudioPortCounterpart(self: Hardware) !AudioCard.AudioCardInfo {
+    const card = self.cards.items[self.selected_card];
+    const selected_port = try self.getSelectedAudioPort();
+
+    // the counterpart port has the same indentifer but we need to look in the other list
+    const index = switch (self.selected_stream_type) {
+        StreamType.capture => card.getIndexOf(.playback, selected_port.identifier),
+        StreamType.playback => card.getIndexOf(.capture, selected_port.identifier),
+    } catch {
+        return HardwareError.no_port_counterpart_available;
+    };
+
+    return switch (self.selected_stream_type) {
+        StreamType.capture => card.getPlaybackAt(index),
+        StreamType.playback => card.getCaptureAt(index),
+    };
 }
 
 /// Sets the number of channels for the selected audio port.
@@ -611,3 +638,78 @@ test "findCardBy finds correct card or returns null" {
     const noCard = hardware.findCardBy(FindBy.id, "nonexistent");
     try std.testing.expect(noCard == null);
 }
+
+// TOO: Maybe one day expose mixer info in alsa AudioCard, but to be honest
+// the information here is still limited other then knowing the the channel configuration names
+// For USB audio maybe we need udevlib to get more descriptive information
+//
+//test "alsa mixer test" {
+//    var mixer: ?*c_alsa.snd_mixer_t = null;
+//    if (c_alsa.snd_mixer_open(&mixer, 0) != 0) {
+//        std.debug.print("Failed to open mixer", .{});
+//        return;
+//    }
+//
+//    defer {
+//        const res = c_alsa.snd_mixer_close(mixer);
+//        _ = res;
+//    }
+//
+//    if (c_alsa.snd_mixer_attach(mixer, "hw:3") != 0) {
+//        std.debug.print("Failed to attach mixer", .{});
+//        return;
+//    }
+//
+//    if (c_alsa.snd_mixer_selem_register(mixer, null, null) != 0) {
+//        std.debug.print("Failed to register mixer", .{});
+//        return;
+//    }
+//
+//    if (c_alsa.snd_mixer_load(mixer) != 0) {
+//        std.debug.print("Failed to load mixer", .{});
+//        return;
+//    }
+//
+//    var elem: ?*c_alsa.snd_mixer_elem_t = c_alsa.snd_mixer_first_elem(mixer);
+//
+//    while (elem != null) {
+//        const name = c_alsa.snd_mixer_selem_get_name(elem);
+//        std.debug.print("name: {s}\n", .{name});
+//
+//        const has_playback_ctrl: bool = c_alsa.snd_mixer_selem_has_playback_volume(elem) == 1;
+//        const has_capture_ctrl: bool = c_alsa.snd_mixer_selem_has_capture_volume(elem) == 1;
+//
+//        if (has_playback_ctrl) {
+//            var min: c_long = 0;
+//            var max: c_long = 0;
+//            if (c_alsa.snd_mixer_selem_get_playback_volume_range(elem, &min, &max) != 0) {
+//                std.debug.print("Failed to get volume range\n", .{});
+//                return;
+//            }
+//            std.debug.print("Playback Control: min: {d}, max: {d}\n", .{ min, max });
+//        }
+//
+//        if (has_capture_ctrl) {
+//            var min: c_long = 0;
+//            var max: c_long = 0;
+//            if (c_alsa.snd_mixer_selem_get_capture_volume_range(elem, &min, &max) != 0) {
+//                std.debug.print("Failed to get volume range\n", .{});
+//                return;
+//            }
+//            std.debug.print("Capture Control: min: {d}, max: {d}\n", .{ min, max });
+//        }
+//
+//        if (!has_playback_ctrl and !has_capture_ctrl) {
+//            std.debug.print("No volume control\n", .{});
+//        }
+//
+//        var ch: c_alsa.snd_mixer_selem_channel_id_t = c_alsa.SND_MIXER_SCHN_FRONT_LEFT;
+//        while (ch <= c_alsa.SND_MIXER_SCHN_LAST) : (ch += 1) {
+//            if (c_alsa.snd_mixer_selem_has_playback_channel(elem, ch) != 0) {
+//                std.debug.print("  - Playback Channel: {s}\n", .{c_alsa.snd_mixer_selem_channel_name(ch)});
+//            }
+//        }
+//
+//        elem = c_alsa.snd_mixer_elem_next(elem);
+//    }
+//}

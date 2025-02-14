@@ -129,7 +129,7 @@ pub const AudioCardInfo = struct {
 
         // null means the info is for a card, not a port, so we adjust indentation
         if (self.supported_settings == null) {
-            try writer.print("  │   Ident:       {s}\n", .{self.identifier});
+            try writer.print("  │  Ident:       {s}\n", .{self.identifier});
             try writer.print("  │   ID:          {s}\n", .{self.id});
             try writer.print("  │   Name:        {s}\n", .{self.name});
             try writer.print("  │   Index:       {d}\n", .{self.index});

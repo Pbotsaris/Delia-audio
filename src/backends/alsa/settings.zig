@@ -12,11 +12,8 @@ pub const StreamType = enum(c_uint) {
 };
 
 pub const StartThreshold = enum(u32) {
-    one_period = 1,
-    two_periods = 2,
-    three_periods = 3,
-    four_periods = 4,
-    five_periods = 5,
+    now = 0,
+    fill_one_period = 1,
 };
 
 /// The `Strategy` enum defines the method by which ALSA will handle audio data transfer.

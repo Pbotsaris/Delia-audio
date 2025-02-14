@@ -15,7 +15,8 @@ pub const std_options = .{
 
 const log = std.log.scoped(.main);
 
-const Device = backends.jack.device.GenericDevice(f32);
+const Client = backends.jack.client.JackClient;
+const Hardware = backends.jack.Hardware;
 
 //fn examplePlaybackAndGraph() !void {
 //    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -26,24 +27,35 @@ const Device = backends.jack.device.GenericDevice(f32);
 //    try e.run();
 //    try e.deinit();
 //}
-
 pub fn main() !void {
-    // examplePlaybackAndGraph() catch |err| {
-    //     log.err("{s}", .{err});
-    //     return err;
-    // };
 
-    backends.alsa.examples.usingHardwareToInitDevice();
-    //  std.debug.print("audio_backend: {any}\n", .{audio_backend.audio_backend});
+    //    examplePlaybackAndGraph() catch |err| {
+    //        log.err("{any}", .{err});
+    //        return err;
+    //    };
 
-    //  const dev = Device.init(.{
-    //      .client_name = "device",
-    //  }) catch |err| {
-    //      log.err("{any}", .{err});
-    //      return err;
-    //  };
+    // backends.alsa.examples.printingHardwareInfo();
+    //backends.alsa.examples.findAndPrintCardPortInfo("USB");
+    backends.alsa.examples.selectAudioPortCounterpart();
 
-    //  _ = dev;
+    // backends.alsa.examples.usingHardwareToInitDevice();
+    // std.debug.print("audio_backend: {any}\n", .{audio_backend.audio_backend});
+
+    //    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    //    const allocator = gpa.allocator();
+    //
+    //    const client = try Client.init(.{ .client_name = "device" });
+    //
+    //    const hw = try Hardware.init(allocator, client);
+    //    defer hw.deinit();
+    //
+    //    for (hw.playbacks) |port| {
+    //        std.debug.print("{any}", .{port});
+    //    }
+    //
+    //    for (hw.captures) |port| {
+    //        std.debug.print("{any}", .{port});
+    //    }
 }
 
 test {

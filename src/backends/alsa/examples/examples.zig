@@ -8,7 +8,7 @@ const log = std.log.scoped(.alsa);
 
 // providing the format and the context in which you callback will ruin from
 // at comptime type will allow operation on device to be type safe
-const Device = alsa.device.GenericDevice(.signed_16bits_little_endian, PlaybackContext);
+const Device = alsa.device.HalfDuplexDevice(.signed_16bits_little_endian, PlaybackContext);
 
 const PlaybackContext = struct {
     const Self = @This();
@@ -80,6 +80,30 @@ pub fn printingHardwareInfo() void {
     std.debug.print("{s}", .{hardware});
 }
 
+pub fn findAndPrintCardPortInfo(card_name: []const u8) void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
+
+    const allocator = gpa.allocator();
+
+    // hardware holds information about your system's audio cards and ports
+    var hardware = alsa.Hardware.init(allocator) catch |err| {
+        log.err("Failed to start device: {}", .{err});
+        return;
+    };
+
+    defer hardware.deinit();
+
+    const found_card = hardware.findCardBy(.name, card_name);
+
+    if (found_card) |card| {
+        std.debug.print("{s}", .{card});
+        return;
+    }
+
+    std.debug.print("Card {s} not found", .{card_name});
+}
+
 pub fn findingCardAndPortBy() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
@@ -104,6 +128,42 @@ pub fn findingCardAndPortBy() void {
     }
 
     std.debug.print("Card not found", .{});
+}
+
+pub fn selectAudioPortCounterpart() void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) log.err("Failed to deinit allocator.", .{});
+
+    const allocator = gpa.allocator();
+
+    var hardware = alsa.Hardware.init(allocator) catch |err| {
+        log.err("Failed to initialize hardware: {}", .{err});
+        return;
+    };
+
+    defer hardware.deinit();
+
+    hardware.selectAudioCardBy(.name, "USB") catch |err| {
+        log.err("Failed to select audio card: {}", .{err});
+        return;
+    };
+
+    hardware.selectAudioPortBy(.playback, .name, "USB Audio #1") catch |err| {
+        log.err("Failed to select audio port: {}", .{err});
+        return;
+    };
+    const port = hardware.getSelectedAudioPort() catch |err| {
+        log.err("Failed to get selected port: {}", .{err});
+        return;
+    };
+
+    const counterpart = hardware.getSelectedAudioPortCounterpart() catch |err| {
+        log.err("Failed to get counterpart: {}", .{err});
+        return;
+    };
+
+    std.debug.print("SELECTED PORT:\n{s}", .{port});
+    std.debug.print("COUNTERPART PORT:\n{s}", .{counterpart});
 }
 
 //This example shows how to use the hardware object to initialize a device

@@ -6,7 +6,7 @@
 //!
 //! The Hardware buffer size and period size are calculated based on the user-defined buffer size
 //! for minimizing latency and optimizing performance. This can be further customized by adjusting
-//! the NB_PERIODS constant to increase the number of periods per hardware buffer.
+//! the opts.n_periods to increase the number of periods per hardware buffer.
 
 // TODO: Create an Alsa Allocator following the same pattern as STD for memory allocation
 const std = @import("std");
@@ -25,9 +25,9 @@ pub const FormatType = @import("settings.zig").FormatType;
 pub const AccessType = @import("settings.zig").AccessType;
 pub const StreamType = @import("settings.zig").StreamType;
 pub const Strategy = @import("settings.zig").Strategy;
+pub const StartThreshold = @import("settings.zig").StartThreshold;
 pub const ChannelCount = @import("settings.zig").ChannelCount;
 pub const Mode = @import("settings.zig").Mode;
-pub const StartThreshold = @import("settings.zig").StartThreshold;
 const GenericAudioData = @import("audio_data.zig").GenericAudioData;
 
 pub const SampleRate = @import("../../audio_specs.zig").SampleRate;
@@ -39,9 +39,10 @@ const DeviceOptions = struct {
     stream_type: StreamType = StreamType.playback,
     ident: [:0]const u8 = "default",
     buffer_size: BufferSize = BufferSize.buf_1024,
-    start_thresh: StartThreshold = StartThreshold.three_periods,
     timeout: i32 = -1,
-    // not exposed to the user for now
+    n_periods: u32 = 5,
+    start_thresh: StartThreshold = .fill_one_period,
+    // not exposed to the caller for now
     // access_type: AccessType = AccessType.mmap_interleaved,
     // mode: Mode = Mode.none,
     allow_resampling: bool = false,
@@ -56,14 +57,17 @@ pub const DeviceHardwareError = error{
     sample_rate,
     buffer_size,
     hardware_params,
+    invalid_hardware_struct,
 } || std.mem.Allocator.Error;
 
 pub const DeviceSoftwareError = error{
     software_params,
     alsa_allocation,
     set_avail_min,
-    set_start_threshold,
+    set_start_stop_threshold,
     set_period_event,
+    set_silence,
+    set_timestamp,
     prepare,
 } || std.mem.Allocator.Error;
 
@@ -77,7 +81,7 @@ pub const AudioLoopError = error{
     audio_buffer_nonalignment,
 };
 
-pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
+pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) type {
     const T = format_type.ToType();
 
     return struct {
@@ -90,15 +94,10 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         }
 
         const Self = @This();
-        // this constant will is the multiplier that will define the size of the hardware buffer size.
-        //  hardware_buffer_size = user_defined_buffer_size * NB_PERIODS
-        //  TODO: Maybe expose this as setting
-        pub const NB_PERIODS = 5;
-
         // defined at compile time for this device type
         pub const FORMAT_TYPE = format_type;
 
-        const AudioLoop = GenericAudioLoop(format_type, ContextType);
+        const AudioLoop = HalfDuplexAudioLoop(format_type, ContextType);
         pub const AudioCallback = AudioLoop.AudioCallback();
 
         /// Pointer to the PCM device handle.
@@ -124,8 +123,10 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         hardware_buffer_size: u32,
         /// Size of one hardware period in frames.
         hardware_period_size: u32,
-        /// Number of periods before ALSA starts reading/writing audio data.
-        start_thresh: StartThreshold,
+        /// Number of frames before ALSA starts reading/writing audio data.
+        start_thresh: u32,
+        /// Number of frames before ALSA stops reading/writting after underrun.
+        stop_thresh: u32,
         /// Timeout in milliseconds for ALSA to wait before returning an error during read/write operations.
         timeout: i32,
         /// Defines the transfer method used by the audio callback (e.g., read/write interleaved,  read/write non-interleaved , mmap intereaved).
@@ -136,6 +137,10 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         /// TODO: Description
         strategy: Strategy = Strategy.min_available,
 
+        /// this constant will is the multiplier that will define the size of the hardware buffer size.
+        ///  hardware_buffer_size = user_defined_buffer_size * NB_PERIODS
+        n_periods: u32,
+
         // Use RW transfers that require a buffer to store the data
         transfer_buffer: []u8 = undefined,
         allocator: std.mem.Allocator,
@@ -143,7 +148,7 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
         const DeviceOptionsFromHardware = struct {
             mode: Mode = Mode.none,
             buffer_size: BufferSize = BufferSize.buf_1024,
-            start_thresh: StartThreshold = StartThreshold.three_periods,
+            start_thresh: StartThreshold = .fill_one_period,
             timeout: i32 = -1,
             // not exposed to the user for now
             // access_type: AccessType = AccessType.mmap_interleaved,
@@ -172,9 +177,9 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
             const port = try hardware.getSelectedAudioPort();
 
             const opts = DeviceOptions{
-                .sample_rate = port.selected_settings.sample_rate orelse SampleRate.sr_44100,
-                .channels = port.selected_settings.channels orelse ChannelCount.stereo,
-                .stream_type = port.stream_type orelse StreamType.playback,
+                .sample_rate = port.selected_settings.sample_rate orelse return DeviceHardwareError.invalid_hardware_struct,
+                .channels = port.selected_settings.channels orelse return DeviceHardwareError.invalid_hardware_struct,
+                .stream_type = port.stream_type orelse return DeviceHardwareError.invalid_hardware_struct,
                 .ident = port.identifier,
                 .buffer_size = inc_opts.buffer_size,
                 .start_thresh = inc_opts.start_thresh,
@@ -212,7 +217,7 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
 
             // we are configuring the hardware to match the software buffer size and optimize latency
             var hardware_period_size: c_ulong = @intFromEnum(opts.buffer_size);
-            var hardware_buffer_size: c_ulong = hardware_period_size * NB_PERIODS;
+            var hardware_buffer_size: c_ulong = hardware_period_size * @as(c_ulong, @intCast(opts.n_periods));
 
             var dir: i32 = 0;
 
@@ -331,6 +336,9 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
             const frame_size: usize = @intFromEnum(opts.channels) * @sizeOf(T);
             const buffer_bytes: usize = frame_size * @intFromEnum(opts.buffer_size);
 
+            // either start with after filling one hardware buffer size or as soon as possible
+            const start_tresh: u32 = @as(u32, @intCast(@intFromEnum(opts.buffer_size))) * opts.n_periods * @as(u32, @intCast(@intFromEnum(opts.start_thresh)));
+
             return Self{
                 .pcm_handle = pcm_handle,
                 .hw_params = params,
@@ -339,10 +347,12 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
                 .dir = dir,
                 .stream_type = opts.stream_type,
                 .buffer_size = opts.buffer_size,
-                .start_thresh = opts.start_thresh,
+                .start_thresh = start_tresh,
+                .stop_thresh = @as(u32, @intCast(@intFromEnum(opts.buffer_size))) * opts.n_periods,
                 .timeout = opts.timeout,
                 .hardware_buffer_size = @as(u32, @intCast(hardware_buffer_size)),
                 .hardware_period_size = @as(u32, @intCast(hardware_period_size)),
+                .n_periods = opts.n_periods,
                 .audio_format = Format(T).init(FORMAT_TYPE),
                 .allocator = allocator,
                 // TOOD: see if we still need this buffer
@@ -399,11 +409,42 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
                 return DeviceSoftwareError.set_avail_min;
             }
 
-            err = c_alsa.snd_pcm_sw_params_set_start_threshold(self.pcm_handle, self.sw_params, @intFromEnum(self.start_thresh));
+            err = c_alsa.snd_pcm_sw_params_set_start_threshold(self.pcm_handle, self.sw_params, self.start_thresh);
 
             if (err < 0) {
-                log.err("Failed to set start threshold '{s}': {s}", .{ @tagName(self.start_thresh), c_alsa.snd_strerror(err) });
-                return DeviceSoftwareError.set_start_threshold;
+                log.err("Failed to set start threshold  to '{d}' frames: {s}", .{ self.start_thresh, c_alsa.snd_strerror(err) });
+                return DeviceSoftwareError.set_start_stop_threshold;
+            }
+
+            err = c_alsa.snd_pcm_sw_params_set_stop_threshold(self.pcm_handle, self.sw_params, self.stop_thresh);
+
+            if (err < 0) {
+                log.err("Failed to set stop threshold to '{d}' frames: {s}", .{ self.stop_thresh, c_alsa.snd_strerror(err) });
+                return DeviceSoftwareError.set_start_stop_threshold;
+            }
+
+            // we set the silence size to the size of the hardware buffer
+            const silence_size = @as(c_alsa.snd_pcm_uframes_t, @intCast(@intFromEnum(self.buffer_size))) * @as(c_alsa.snd_pcm_uframes_t, @intCast(self.n_periods));
+
+            err = c_alsa.snd_pcm_sw_params_set_silence_size(self.pcm_handle, self.sw_params, silence_size);
+
+            if (err < 0) {
+                log.err("Failed to set silence size to  buffer size '{s}' * {d} period = {d}: {s}", .{ @tagName(self.buffer_size), self.n_periods, silence_size, c_alsa.snd_strerror(err) });
+                return DeviceSoftwareError.set_silence;
+            }
+
+            err = c_alsa.snd_pcm_sw_params_set_tstamp_mode(self.pcm_handle, self.sw_params, c_alsa.SND_PCM_TSTAMP_ENABLE);
+
+            if (err < 0) {
+                log.err("Failed to enable timestamp: {s}", .{c_alsa.snd_strerror(err)});
+                return DeviceSoftwareError.set_timestamp;
+            }
+
+            err = c_alsa.snd_pcm_sw_params_set_tstamp_type(self.pcm_handle, self.sw_params, c_alsa.SND_PCM_TSTAMP_TYPE_MONOTONIC);
+
+            if (err < 0) {
+                log.err("Failed to set timestamp type: {s}", .{c_alsa.snd_strerror(err)});
+                return DeviceSoftwareError.set_timestamp;
             }
 
             if (strategy == Strategy.period_event) {
@@ -470,7 +511,7 @@ pub fn GenericDevice(comptime format_type: FormatType, ContextType: type) type {
 
 // Audio Loop Implementation
 
-fn GenericAudioLoop(comptime format_type: FormatType, ContextType: type) type {
+fn HalfDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type {
     return struct {
         const Self = @This();
 
@@ -488,12 +529,12 @@ fn GenericAudioLoop(comptime format_type: FormatType, ContextType: type) type {
         const MAX_ZERO_TRANSFERS = 5;
         const BYTE_ALIGN = 8;
 
-        device: GenericDevice(format_type, ContextType),
+        device: HalfDuplexDevice(format_type, ContextType),
         running: bool = false,
         callback: AudioCallback(),
         ctx: *ContextType,
 
-        pub fn init(device: GenericDevice(format_type, ContextType), ctx: *ContextType, callback: AudioCallback()) Self {
+        pub fn init(device: HalfDuplexDevice(format_type, ContextType), ctx: *ContextType, callback: AudioCallback()) Self {
             return .{
                 .device = device,
                 .callback = callback,
