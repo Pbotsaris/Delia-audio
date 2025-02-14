@@ -49,6 +49,11 @@ const AudioCardSettings = struct {
 ///
 /// This struct is typically used within the `AudioCard` struct to manage individual ports on an audio card.
 pub const AudioCardInfo = struct {
+    pub const AudioCardInfoType = enum {
+        card,
+        device,
+    };
+
     /// The index of the audio card or port.
     index: c_int,
     /// The ALSA id string for the card or port.
@@ -68,6 +73,8 @@ pub const AudioCardInfo = struct {
     stream_type: ?StreamType = null,
     allocator: std.mem.Allocator,
 
+    type: AudioCardInfoType,
+
     //// Initializes an `AudioCardInfo` from ALSA C types.
     ///
     /// - `allocator`: The memory allocator to use for dynamic allocations.
@@ -81,6 +88,7 @@ pub const AudioCardInfo = struct {
             .allocator = allocator,
             .index = if (ident.device >= 0) ident.device else ident.card,
             .selected_settings = AudioCardSettings{},
+            .type = if (ident.device >= 0) .device else .card,
         };
 
         const spanned_id = std.mem.span(id);

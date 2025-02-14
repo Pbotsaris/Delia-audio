@@ -37,7 +37,7 @@ pub fn playbackSineWave() void {
 
     var dev = Device.init(allocator, .{
         .sample_rate = .sr_44100,
-        .channels = .stereo,
+        .channels = .quad,
         .stream_type = .playback,
         .buffer_size = .buf_512,
         .ident = "hw:3,0",

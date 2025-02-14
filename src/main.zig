@@ -36,7 +36,8 @@ pub fn main() !void {
 
     // backends.alsa.examples.printingHardwareInfo();
     //backends.alsa.examples.findAndPrintCardPortInfo("USB");
-    backends.alsa.examples.selectAudioPortCounterpart();
+    //backends.alsa.examples.selectAudioPortCounterpart();
+    backends.alsa.examples.playbackSineWave();
 
     // backends.alsa.examples.usingHardwareToInitDevice();
     // std.debug.print("audio_backend: {any}\n", .{audio_backend.audio_backend});

@@ -216,7 +216,7 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
             var sample_rate: u32 = @intCast(@intFromEnum(opts.sample_rate));
 
             // we are configuring the hardware to match the software buffer size and optimize latency
-            var hardware_period_size: c_ulong = @intFromEnum(opts.buffer_size);
+            var hardware_period_size: c_ulong = @intFromEnum(opts.buffer_size) * @as(c_ulong, @intFromEnum(opts.channels));
             var hardware_buffer_size: c_ulong = hardware_period_size * @as(c_ulong, @intCast(opts.n_periods));
 
             var dir: i32 = 0;
@@ -725,15 +725,16 @@ fn HalfDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
             }
 
             const bit_depth: c_uint = @intCast(self.device.audio_format.bit_depth);
-            const physical_byte_rate: c_uint = @intCast(self.device.audio_format.physical_byte_rate);
 
             if (area.step % bit_depth != 0) {
                 log.err("Area.step is non-aligned with audio_format.bit_depth. area.step == {d} bits && audio_format.bit_depth == {d} bits", .{ area.step, bit_depth });
                 return AudioLoopError.audio_buffer_nonalignment;
             }
 
-            if (area.step != (physical_byte_rate * bit_depth)) {
-                log.err("Area.step is not equal to audio_format.physical_byte_rate. area.step == {d} bits && audio_format.physical_byte_rate == {d} bits", .{ area.step, physical_byte_rate * bit_depth });
+            const n_channels: c_uint = @intCast(self.device.channels);
+
+            if (area.step != (n_channels * bit_depth)) {
+                log.err("Area.step is not equal to audio_format.physical_byte_rate. area.step == {d} bits && audio_format.physical_byte_rate == {d} bits", .{ area.step, bit_depth * n_channels });
                 return AudioLoopError.audio_buffer_nonalignment;
             }
         }

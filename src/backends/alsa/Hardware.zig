@@ -639,6 +639,62 @@ test "findCardBy finds correct card or returns null" {
     try std.testing.expect(noCard == null);
 }
 
+test "getSelectedAudioPortCounterpart finds counterpart or returns error" {
+    const allocator = std.testing.allocator;
+    const AudioCardInfo = AudioCard.AudioCardInfo;
+
+    var hardware = Hardware{
+        .cards = std.ArrayList(AudioCard).init(allocator),
+        .allocator = allocator,
+        .selected_card = 0,
+        .selected_port = 0,
+        .selected_stream_type = StreamType.playback,
+    };
+    defer hardware.deinit();
+
+    // Mock AudioCard with playback and capture ports having matching identifiers
+    var card = AudioCard.init(
+        allocator,
+        try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "hw:0", "Card 1"),
+    );
+
+    // Add playback and capture ports with the same identifier to simulate counterparts
+    try card.playbacks.append(
+        try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "hw:0,0", "Playback 1"),
+    );
+
+    try card.captures.append(
+        try AudioCardInfo.init(allocator, .{ .card = 0, .device = 0 }, "hw:0,0", "Capture 1"),
+    );
+
+    try hardware.cards.append(card);
+
+    try hardware.selectAudioPortAt(StreamType.playback, 0);
+    const capture_port = try hardware.getSelectedAudioPortCounterpart();
+    try std.testing.expectEqualStrings("Capture 1", capture_port.name);
+
+    try hardware.selectAudioPortAt(StreamType.capture, 0);
+    const playback_port = try hardware.getSelectedAudioPortCounterpart();
+    try std.testing.expectEqualStrings("Playback 1", playback_port.name);
+
+    var card_no_counterpart = AudioCard.init(
+        allocator,
+        try AudioCardInfo.init(allocator, .{ .card = 1, .device = 0 }, "hw:1", "Card 2"),
+    );
+
+    try card_no_counterpart.playbacks.append(
+        try AudioCardInfo.init(allocator, .{ .card = 1, .device = 0 }, "hw:1,0", "Playback Only"),
+    );
+
+    try hardware.cards.append(card_no_counterpart);
+    hardware.selected_card = 1;
+    hardware.selected_port = 0;
+    hardware.selected_stream_type = StreamType.playback;
+
+    const result = hardware.getSelectedAudioPortCounterpart();
+    try std.testing.expectError(HardwareError.no_port_counterpart_available, result);
+}
+
 // TOO: Maybe one day expose mixer info in alsa AudioCard, but to be honest
 // the information here is still limited other then knowing the the channel configuration names
 // For USB audio maybe we need udevlib to get more descriptive information
@@ -710,6 +766,252 @@ test "findCardBy finds correct card or returns null" {
 //            }
 //        }
 //
+//        elem = c_alsa.snd_mixer_elem_next(elem);
+//    }
+//}
+
+//       c_alsa.snd_ctl_elem_list_free(list);
+//  }
+//test "alsa control elements query by device/subdevice" {
+//    const card_name = "hw:3"; // Change this to match your system
+//                              // const target_device = 0; // Change to filter a specific device (e.g., hw:3,0)
+//                              // const target_subdevice = 0; // Usually 0 unless multiple subdevices exist
+//
+//    var ctl: ?*c_alsa.snd_ctl_t = null;
+//
+//    if (c_alsa.snd_ctl_open(&ctl, card_name, 0) != 0) {
+//        std.debug.print("❌ Failed to open control interface for {s}\n", .{card_name});
+//        return;
+//    }
+//
+//    defer {
+//        _ = c_alsa.snd_ctl_close(ctl);
+//    }
+//
+//    var list: ?*c_alsa.snd_ctl_elem_list_t = null;
+//    if (c_alsa.snd_ctl_elem_list_malloc(&list) != 0) {
+//        std.debug.print("❌ Failed to allocate control element list\n", .{});
+//        return;
+//    }
+//
+//    defer {
+//
+//    if (c_alsa.snd_ctl_elem_list(ctl, list) != 0) {
+//        std.debug.print("❌ Failed to list control elements\n", .{});
+//        return;
+//    }
+//
+//    const count = c_alsa.snd_ctl_elem_list_get_count(list);
+//    std.debug.print("\n🔹 Found {d} control elements:\n", .{count});
+//
+//    if (c_alsa.snd_ctl_elem_list_alloc_space(list, count) != 0) {
+//        std.debug.print("❌ Failed to allocate space for elements\n", .{});
+//        return;
+//    }
+//
+//    if (c_alsa.snd_ctl_elem_list(ctl, list) != 0) {
+//        std.debug.print("❌ Failed to retrieve element list\n", .{});
+//        return;
+//    }
+//
+//    var elem_info: ?*c_alsa.snd_ctl_elem_info_t = null;
+//    if (c_alsa.snd_ctl_elem_info_malloc(&elem_info) != 0) {
+//        std.debug.print("❌ Failed to allocate control element info\n", .{});
+//        return;
+//    }
+//
+//    defer {
+//        c_alsa.snd_ctl_elem_info_free(elem_info);
+//    }
+//
+//    var elem_id: ?*c_alsa.snd_ctl_elem_id_t = null;
+//    if (c_alsa.snd_ctl_elem_id_malloc(&elem_id) != 0) {
+//        std.debug.print("❌ Failed to allocate element ID\n", .{});
+//        return;
+//    }
+//
+//    defer {
+//        c_alsa.snd_ctl_elem_id_free(elem_id);
+//    }
+//
+//    for (0..count) |i| {
+//        c_alsa.snd_ctl_elem_list_get_id(list, @intCast(i), elem_id);
+//        c_alsa.snd_ctl_elem_info_set_id(elem_info, elem_id);
+//
+//        if (c_alsa.snd_ctl_elem_info(ctl, elem_info) != 0) {
+//            std.debug.print("❌ Failed to retrieve info for element {d}\n", .{i});
+//            continue;
+//        }
+//
+//        const numid = c_alsa.snd_ctl_elem_info_get_numid(elem_info);
+//        const iface = c_alsa.snd_ctl_elem_info_get_interface(elem_info);
+//        const name = c_alsa.snd_ctl_elem_info_get_name(elem_info);
+//        const index = c_alsa.snd_ctl_elem_info_get_index(elem_info);
+//
+//        const device = c_alsa.snd_ctl_elem_info_get_device(elem_info);
+//        const subdevice = c_alsa.snd_ctl_elem_info_get_subdevice(elem_info);
+//
+//        // **FILTERING: Only print if it belongs to the target device/subdevice**
+//        if (iface == c_alsa.SND_CTL_ELEM_IFACE_MIXER) {
+//            std.debug.print("\n🔸 NumID: {d}, Device: {d}, Subdevice: {d}, Interface: {s}, Name: {s}, Index: {d}\n", .{
+//                numid, device, subdevice,
+//                switch (iface) {
+//                    c_alsa.SND_CTL_ELEM_IFACE_CARD => "CARD",
+//                    c_alsa.SND_CTL_ELEM_IFACE_MIXER => "MIXER",
+//                    c_alsa.SND_CTL_ELEM_IFACE_PCM => "PCM",
+//                    else => "OTHER",
+//                },
+//                name,
+//                index,
+//            });
+//
+//            // Classify the control elements
+//        }
+//    }
+//}
+
+//test "2alsa control elements query by device/subdevice" {
+//    const card_name = "hw:3";
+//    var ctl: ?*c_alsa.snd_ctl_t = null;
+//    if (c_alsa.snd_ctl_open(&ctl, card_name, 0) != 0) {
+//        std.debug.print("❌ Failed to open control interface for {s}\n", .{card_name});
+//        return;
+//    }
+//    defer {
+//        _ = c_alsa.snd_ctl_close(ctl);
+//    }
+//
+//    var list: ?*c_alsa.snd_ctl_elem_list_t = null;
+//    if (c_alsa.snd_ctl_elem_list_malloc(&list) != 0) {
+//        std.debug.print("❌ Failed to allocate control element list\n", .{});
+//        return;
+//    }
+//    defer {
+//        c_alsa.snd_ctl_elem_list_free(list);
+//    }
+//
+//    if (c_alsa.snd_ctl_elem_list(ctl, list) != 0) return;
+//
+//    const count = c_alsa.snd_ctl_elem_list_get_count(list);
+//
+//    if (c_alsa.snd_ctl_elem_list_alloc_space(list, count) != 0) return;
+//
+//    if (c_alsa.snd_ctl_elem_list(ctl, list) != 0) return;
+//
+//    var elem_info: ?*c_alsa.snd_ctl_elem_info_t = null;
+//    if (c_alsa.snd_ctl_elem_info_malloc(&elem_info) != 0) return;
+//    defer c_alsa.snd_ctl_elem_info_free(elem_info);
+//
+//    var elem_id: ?*c_alsa.snd_ctl_elem_id_t = null;
+//    if (c_alsa.snd_ctl_elem_id_malloc(&elem_id) != 0) return;
+//    defer c_alsa.snd_ctl_elem_id_free(elem_id);
+//
+//    std.debug.print("\n🎵 PCM Devices:\n", .{});
+//    // First get PCM info
+//    for (0..count) |i| {
+//        c_alsa.snd_ctl_elem_list_get_id(list, @intCast(i), elem_id);
+//        c_alsa.snd_ctl_elem_info_set_id(elem_info, elem_id);
+//        if (c_alsa.snd_ctl_elem_info(ctl, elem_info) != 0) continue;
+//
+//        const iface = c_alsa.snd_ctl_elem_info_get_interface(elem_info);
+//
+//        if (iface == c_alsa.SND_CTL_ELEM_IFACE_PCM) {
+//            const name = c_alsa.snd_ctl_elem_info_get_name(elem_info);
+//            const numid = c_alsa.snd_ctl_elem_info_get_numid(elem_info);
+//            const device = c_alsa.snd_ctl_elem_info_get_device(elem_info);
+//            const subdevice = c_alsa.snd_ctl_elem_info_get_subdevice(elem_info);
+//
+//            std.debug.print("PCM Device {d}.{d}: {s} (NumID: {d})\n", .{ device, subdevice, name, numid });
+//        }
+//    }
+//
+//    std.debug.print("\n🎛️ Card Info:\n", .{});
+//    // Then get CARD info
+//    for (0..count) |i| {
+//        c_alsa.snd_ctl_elem_list_get_id(list, @intCast(i), elem_id);
+//        c_alsa.snd_ctl_elem_info_set_id(elem_info, elem_id);
+//        if (c_alsa.snd_ctl_elem_info(ctl, elem_info) != 0) continue;
+//
+//        const iface = c_alsa.snd_ctl_elem_info_get_interface(elem_info);
+//        if (iface == c_alsa.SND_CTL_ELEM_IFACE_CARD) {
+//            const name = c_alsa.snd_ctl_elem_info_get_name(elem_info);
+//            const numid = c_alsa.snd_ctl_elem_info_get_numid(elem_info);
+//            const device = c_alsa.snd_ctl_elem_info_get_device(elem_info);
+//            const subdevice = c_alsa.snd_ctl_elem_info_get_subdevice(elem_info);
+//
+//            std.debug.print("Card Info: {s} (NumID: {d}, Device: {d}, Subdevice: {d})\n", .{ name, numid, device, subdevice });
+//        }
+//    }
+//
+//    for (0..count) |i| {
+//        c_alsa.snd_ctl_elem_list_get_id(list, @intCast(i), elem_id);
+//        c_alsa.snd_ctl_elem_info_set_id(elem_info, elem_id);
+//        if (c_alsa.snd_ctl_elem_info(ctl, elem_info) != 0) continue;
+//
+//        const iface = c_alsa.snd_ctl_elem_info_get_interface(elem_info);
+//        if (iface == c_alsa.SND_CTL_ELEM_IFACE_MIXER) {
+//            const name = c_alsa.snd_ctl_elem_info_get_name(elem_info);
+//            const numid = c_alsa.snd_ctl_elem_info_get_numid(elem_info);
+//            const device = c_alsa.snd_ctl_elem_info_get_device(elem_info);
+//            const subdevice = c_alsa.snd_ctl_elem_info_get_subdevice(elem_info);
+//
+//            std.debug.print("Mixer Info: {s} (NumID: {d}, Device: {d}, Subdevice: {d})\n", .{ name, numid, device, subdevice });
+//        }
+//    }
+//}
+
+//test "another mixer test" {
+//    var mixer: ?*c_alsa.snd_mixer_t = null;
+//    if (c_alsa.snd_mixer_open(&mixer, 0) != 0) {
+//        std.debug.print("❌ Failed to open mixer\n", .{});
+//        return;
+//    }
+//    defer {
+//        _ = c_alsa.snd_mixer_close(mixer);
+//    }
+//
+//    // Attach to the correct card
+//    const card_name = "hw:3";
+//    if (c_alsa.snd_mixer_attach(mixer, card_name) != 0) {
+//        std.debug.print("❌ Failed to attach mixer to {s}\n", .{card_name});
+//        return;
+//    }
+//
+//    // Register and load mixer elements
+//    if (c_alsa.snd_mixer_selem_register(mixer, null, null) != 0 or
+//        c_alsa.snd_mixer_load(mixer) != 0)
+//    {
+//        std.debug.print("❌ Failed to initialize mixer\n", .{});
+//        return;
+//    }
+//
+//    var elem: ?*c_alsa.snd_mixer_elem_t = c_alsa.snd_mixer_first_elem(mixer);
+//    while (elem != null) {
+//        // Get the name of the control (same as alsamixer)
+//        const name = c_alsa.snd_mixer_selem_get_name(elem);
+//        std.debug.print("🎛️ Mixer Element: {s}\n", .{name});
+//
+//        // Check if it's a playback or capture control
+//        if (c_alsa.snd_mixer_selem_has_playback_volume(elem) != 0) {
+//            std.debug.print("   ↳ Playback Volume Control\n", .{});
+//            // Check available channels
+//            for (0..8) |ch| {
+//                if (c_alsa.snd_mixer_selem_has_playback_channel(elem, @intCast(ch)) != 0) {
+//                    std.debug.print("   🎧 Playback Channel {d}\n", .{ch});
+//                }
+//            }
+//        }
+//        if (c_alsa.snd_mixer_selem_has_capture_volume(elem) != 0) {
+//            std.debug.print("   ↳ Capture Volume Control\n", .{});
+//
+//            for (0..8) |ch| {
+//                if (c_alsa.snd_mixer_selem_has_capture_channel(elem, @intCast(ch)) != 0) {
+//                    std.debug.print("   🎤 Capture Channel {d}\n", .{ch});
+//                }
+//            }
+//        }
+//
+//        // Move to the next mixer element
 //        elem = c_alsa.snd_mixer_elem_next(elem);
 //    }
 //}
