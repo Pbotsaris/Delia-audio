@@ -31,13 +31,15 @@ pub fn main() !void {
 
     //    examplePlaybackAndGraph() catch |err| {
     //        log.err("{any}", .{err});
+
     //        return err;
     //    };
-
     // backends.alsa.examples.printingHardwareInfo();
     //backends.alsa.examples.findAndPrintCardPortInfo("USB");
     //backends.alsa.examples.selectAudioPortCounterpart();
-    backends.alsa.examples.playbackSineWave();
+    // backends.alsa.examples.fullDuplexCallback();
+    backends.alsa.examples.fullDuplexCallback();
+    //backends.alsa.examples.playbackSineWave();
 
     // backends.alsa.examples.usingHardwareToInitDevice();
     // std.debug.print("audio_backend: {any}\n", .{audio_backend.audio_backend});

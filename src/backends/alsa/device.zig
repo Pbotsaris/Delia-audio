@@ -10,9 +10,12 @@
 
 // TODO: Create an Alsa Allocator following the same pattern as STD for memory allocation
 const std = @import("std");
-
 const c_alsa = @cImport({
     @cInclude("asoundlib.h");
+});
+
+const c = @cImport({
+    @cInclude("sys/poll.h");
 });
 
 const log = std.log.scoped(.alsa);
@@ -33,19 +36,20 @@ const GenericAudioData = @import("audio_data.zig").GenericAudioData;
 pub const SampleRate = @import("../../audio_specs.zig").SampleRate;
 pub const BufferSize = @import("../../audio_specs.zig").BufferSize;
 
-const DeviceOptions = struct {
+const HalfDuplexDeviceOptions = struct {
     sample_rate: SampleRate = SampleRate.sr_44100,
     channels: ChannelCount = ChannelCount.stereo,
     stream_type: StreamType = StreamType.playback,
-    ident: [:0]const u8 = "default",
+    // no default allowed because alsa may segfault depending on linux audio configuration
+    ident: [:0]const u8,
     buffer_size: BufferSize = BufferSize.buf_1024,
     timeout: i32 = -1,
     n_periods: u32 = 5,
     start_thresh: StartThreshold = .fill_one_period,
+    must_prepare: bool = true,
     // not exposed to the caller for now
     // access_type: AccessType = AccessType.mmap_interleaved,
     // mode: Mode = Mode.none,
-    allow_resampling: bool = false,
 };
 
 pub const DeviceHardwareError = error{
@@ -57,6 +61,7 @@ pub const DeviceHardwareError = error{
     sample_rate,
     buffer_size,
     hardware_params,
+    linking_devices,
     invalid_hardware_struct,
 } || std.mem.Allocator.Error;
 
@@ -143,16 +148,21 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
 
         // Use RW transfers that require a buffer to store the data
         transfer_buffer: []u8 = undefined,
+
         allocator: std.mem.Allocator,
+
+        /// wether HalfDuplexDevice.prepare will explicitly call snd_pcm_prepare.
+        /// Useful snd_pcm_link devices and don't want to call prepare on the slave device
+        must_prepare: bool = true,
 
         const DeviceOptionsFromHardware = struct {
             mode: Mode = Mode.none,
             buffer_size: BufferSize = BufferSize.buf_1024,
             start_thresh: StartThreshold = .fill_one_period,
             timeout: i32 = -1,
+            must_prepare: bool = true,
             // not exposed to the user for now
             // access_type: AccessType = AccessType.mmap_interleaved,
-            allow_resampling: bool = true,
         };
 
         // Initializes a `Device` using the provided `Hardware` configuration and additional options.
@@ -176,7 +186,7 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
         pub fn fromHardware(allocator: std.mem.Allocator, hardware: Hardware, inc_opts: DeviceOptionsFromHardware) !Self {
             const port = try hardware.getSelectedAudioPort();
 
-            const opts = DeviceOptions{
+            const opts = HalfDuplexDeviceOptions{
                 .sample_rate = port.selected_settings.sample_rate orelse return DeviceHardwareError.invalid_hardware_struct,
                 .channels = port.selected_settings.channels orelse return DeviceHardwareError.invalid_hardware_struct,
                 .stream_type = port.stream_type orelse return DeviceHardwareError.invalid_hardware_struct,
@@ -184,7 +194,7 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 .buffer_size = inc_opts.buffer_size,
                 .start_thresh = inc_opts.start_thresh,
                 .timeout = inc_opts.timeout,
-                .allow_resampling = inc_opts.allow_resampling,
+                .must_prepare = inc_opts.must_prepare,
             };
 
             return try init(allocator, opts);
@@ -210,13 +220,13 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
         // # Errors:
         // - Returns an error if the PCM device cannot be opened, if the hardware parameters cannot be set,
         //   or if there is a mismatch between the requested and actual sample rate.
-        pub fn init(allocator: std.mem.Allocator, opts: DeviceOptions) DeviceHardwareError!Self {
+        pub fn init(allocator: std.mem.Allocator, opts: HalfDuplexDeviceOptions) DeviceHardwareError!Self {
             var pcm_handle: ?*c_alsa.snd_pcm_t = null;
             var params: ?*c_alsa.snd_pcm_hw_params_t = null;
             var sample_rate: u32 = @intCast(@intFromEnum(opts.sample_rate));
 
             // we are configuring the hardware to match the software buffer size and optimize latency
-            var hardware_period_size: c_ulong = @intFromEnum(opts.buffer_size) * @as(c_ulong, @intFromEnum(opts.channels));
+            var hardware_period_size: c_ulong = @intFromEnum(opts.buffer_size);
             var hardware_buffer_size: c_ulong = hardware_period_size * @as(c_ulong, @intCast(opts.n_periods));
 
             var dir: i32 = 0;
@@ -252,12 +262,6 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
             errdefer c_alsa.snd_pcm_hw_params_free(params);
 
             _ = c_alsa.snd_pcm_hw_params_any(pcm_handle, params);
-
-            if (opts.allow_resampling) {
-                if (c_alsa.snd_pcm_hw_params_set_rate_resample(pcm_handle, params, 1) < 0) {
-                    log.warn("Failed to set resampling: {s}", .{c_alsa.snd_strerror(err)});
-                }
-            }
 
             // always set mmap interleaved access type for now
             err = c_alsa.snd_pcm_hw_params_set_access(pcm_handle, params, @intFromEnum(AccessType.mmap_interleaved));
@@ -326,10 +330,25 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 return DeviceHardwareError.buffer_size;
             }
 
+            // we calculate the expected buffer size based on the user defined buffer size
+            const expected_buffer_size: u32 = @as(u32, @intCast(@intFromEnum(opts.buffer_size))) * opts.n_periods;
+
+            if (hardware_buffer_size != @as(c_ulong, @intCast(expected_buffer_size))) {
+                log.err("Hardware buffer size {d} differs from requested {d}", .{ hardware_buffer_size, expected_buffer_size });
+                return DeviceHardwareError.buffer_size;
+            }
+
             err = c_alsa.snd_pcm_hw_params_get_period_size(params, &hardware_period_size, &dir);
 
             if (err < 0) {
                 log.err("Failed to get hardware period size: {s}", .{c_alsa.snd_strerror(err)});
+                return DeviceHardwareError.buffer_size;
+            }
+
+            const expected_period_size: u32 = @divFloor(expected_buffer_size, opts.n_periods);
+
+            if (hardware_period_size != @as(c_ulong, @intCast(expected_period_size))) {
+                log.err("Hardware period size {d} differs from requested {d}", .{ hardware_period_size, expected_period_size });
                 return DeviceHardwareError.buffer_size;
             }
 
@@ -357,6 +376,7 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 .allocator = allocator,
                 // TOOD: see if we still need this buffer
                 .transfer_buffer = try allocator.alloc(u8, buffer_bytes),
+                .must_prepare = opts.must_prepare,
             };
         }
 
@@ -424,12 +444,17 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
             }
 
             // we set the silence size to the size of the hardware buffer
+            // this may change in the future if we decide to implement our silecing implementation
             const silence_size = @as(c_alsa.snd_pcm_uframes_t, @intCast(@intFromEnum(self.buffer_size))) * @as(c_alsa.snd_pcm_uframes_t, @intCast(self.n_periods));
-
             err = c_alsa.snd_pcm_sw_params_set_silence_size(self.pcm_handle, self.sw_params, silence_size);
 
             if (err < 0) {
-                log.err("Failed to set silence size to  buffer size '{s}' * {d} period = {d}: {s}", .{ @tagName(self.buffer_size), self.n_periods, silence_size, c_alsa.snd_strerror(err) });
+                log.err("Failed to set silence size to  buffer size '{s}' * {d} period = {d}: {s}", .{
+                    @tagName(self.buffer_size),
+                    self.n_periods,
+                    silence_size,
+                    c_alsa.snd_strerror(err),
+                });
                 return DeviceSoftwareError.set_silence;
             }
 
@@ -461,11 +486,13 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 return DeviceSoftwareError.software_params;
             }
 
-            err = c_alsa.snd_pcm_prepare(self.pcm_handle);
+            if (self.must_prepare) {
+                err = c_alsa.snd_pcm_prepare(self.pcm_handle);
 
-            if (err < 0) {
-                log.err("Failed to prepare Audio Interface: {s}", .{c_alsa.snd_strerror(err)});
-                return DeviceSoftwareError.prepare;
+                if (err < 0) {
+                    log.err("Failed to prepare Audio Interface: {s}", .{c_alsa.snd_strerror(err)});
+                    return DeviceSoftwareError.prepare;
+                }
             }
 
             self.strategy = strategy;
@@ -509,7 +536,141 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
     };
 }
 
+const FullDuplexIdent = struct {
+    playback: [:0]const u8 = "default",
+    capture: [:0]const u8 = "default",
+};
+
+const FullDuplexChannels = struct {
+    playback: ChannelCount = ChannelCount.stereo,
+    capture: ChannelCount = ChannelCount.stereo,
+};
+
+// note that for this implementation full duplex must have the same sample rate, channel config,and buffer size
+const FullDuplexDeviceOptions = struct {
+    ident: FullDuplexIdent = FullDuplexIdent{},
+    sample_rate: SampleRate = SampleRate.sr_44100,
+    channels: FullDuplexChannels = FullDuplexChannels{},
+    buffer_size: BufferSize = BufferSize.buf_1024,
+    timeout: i32 = -1,
+    n_periods: u32 = 5,
+    start_thresh: StartThreshold = .fill_one_period,
+    master_device: StreamType = StreamType.playback,
+};
+
+pub fn FullDuplexDevice(comptime format_type: FormatType, ContextType: type) type {
+    const T = format_type.ToType();
+
+    // todo implement FullDuplexAudioLoop
+
+    return struct {
+        pub fn AudioDataType() type {
+            return *GenericAudioData(format_type);
+        }
+
+        pub fn maxFormatSize() usize {
+            return Format(T).maxSize();
+        }
+
+        const Self = @This();
+        const AudioCallback = FullDuplexAudioLoop(format_type, ContextType).AudioCallback();
+
+        playback_device: HalfDuplexDevice(format_type, ContextType),
+        capture_device: HalfDuplexDevice(format_type, ContextType),
+        allocator: std.mem.Allocator,
+        master_device: StreamType,
+        same_channel_config: bool,
+        is_linked: bool,
+
+        // note that the full duplex does not offer resampling capabilities
+        pub fn init(allocator: std.mem.Allocator, opts: FullDuplexDeviceOptions) DeviceHardwareError!Self {
+            const Device = HalfDuplexDevice(format_type, ContextType);
+
+            const is_linked = std.mem.eql(u8, opts.ident.playback, opts.ident.capture);
+
+            const capture_device = try Device.init(allocator, .{
+                .sample_rate = opts.sample_rate,
+                .channels = opts.channels.capture,
+                .stream_type = .capture,
+                .ident = opts.ident.capture,
+                .buffer_size = opts.buffer_size,
+                .timeout = opts.timeout,
+                .n_periods = opts.n_periods,
+                .start_thresh = opts.start_thresh,
+                // we don't want to snd_pcm_prepare the slave device when linked linked
+            });
+
+            // note that slave and master is only relevant when the devices are linked
+            const playback_device = try Device.init(allocator, .{
+                .sample_rate = opts.sample_rate,
+                .channels = opts.channels.playback,
+                .stream_type = .playback,
+                .ident = opts.ident.playback,
+                .buffer_size = opts.buffer_size,
+                .timeout = opts.timeout,
+                .n_periods = opts.n_periods,
+                .start_thresh = opts.start_thresh,
+                .must_prepare = !is_linked,
+            });
+
+            if (is_linked) {
+                log.debug("Linking playback and capture devices.", .{});
+                const err = c_alsa.snd_pcm_link(capture_device.pcm_handle, playback_device.pcm_handle);
+
+                if (err != 0) {
+                    log.err("Failed to link playback and capture devices: {s}", .{c_alsa.snd_strerror(err)});
+                    return DeviceHardwareError.linking_devices;
+                }
+            }
+
+            return .{
+                .playback_device = playback_device,
+                .capture_device = capture_device,
+                .is_linked = is_linked,
+                .allocator = allocator,
+                .same_channel_config = playback_device.channels == capture_device.channels,
+                .master_device = opts.master_device,
+            };
+        }
+
+        pub fn prepare(self: *Self, strategy: Strategy) DeviceSoftwareError!void {
+            try self.playback_device.prepare(strategy);
+            try self.capture_device.prepare(strategy);
+        }
+
+        pub fn start(self: Self, ctx: *ContextType, callback: AudioCallback) !void {
+            var audio_loop = FullDuplexAudioLoop(format_type, ContextType).init(self, ctx, callback);
+
+            try audio_loop.start();
+        }
+
+        pub fn deinit(self: *Self) !void {
+            if (self.is_linked) {
+                const err = c_alsa.snd_pcm_unlink(self.playback_device.pcm_handle);
+
+                if (err != 0) {
+                    log.err("Failed to unlink playback and capture devices: {s}", .{c_alsa.snd_strerror(err)});
+                    return DeviceHardwareError.linking_devices;
+                }
+            }
+
+            try self.playback_device.deinit();
+            try self.capture_device.deinit();
+        }
+    };
+}
+
 // Audio Loop Implementation
+
+// configuration for xrun recovery retries
+const MAX_RETRY = 5;
+const MILLISECONDS = 1_000_000; // 1ms
+const SLEEP_INCREMENT = 1.2;
+//--
+
+// if we have 5 consecutive zero transfers we will consider it an xrun
+const MAX_ZERO_TRANSFERS = 5;
+const BYTE_ALIGN = 8;
 
 fn HalfDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type {
     return struct {
@@ -518,16 +679,6 @@ fn HalfDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
         pub fn AudioCallback() type {
             return *const fn (ctx: *ContextType, data: *GenericAudioData(format_type)) void;
         }
-
-        // configuration for xrun recovery retries
-        const MAX_RETRY = 5;
-        const MILLISECONDS = 1_000_000; // 1ms
-        const SLEEP_INCREMENT = 1.2;
-        //--
-
-        // if we have 5 consecutive zero transfers we will consider it an xrun
-        const MAX_ZERO_TRANSFERS = 5;
-        const BYTE_ALIGN = 8;
 
         device: HalfDuplexDevice(format_type, ContextType),
         running: bool = false,
@@ -734,9 +885,204 @@ fn HalfDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
             const n_channels: c_uint = @intCast(self.device.channels);
 
             if (area.step != (n_channels * bit_depth)) {
-                log.err("Area.step is not equal to audio_format.physical_byte_rate. area.step == {d} bits && audio_format.physical_byte_rate == {d} bits", .{ area.step, bit_depth * n_channels });
+                log.err("Area.step is not equal to audio_format.bit_depth * Device.n_channels. area.step == {d} bits && audio_format.bit_depth({d}) * Device.n_channels({d})  == {d} bits", .{
+                    area.step,
+                    bit_depth,
+                    n_channels,
+                    bit_depth * n_channels,
+                });
                 return AudioLoopError.audio_buffer_nonalignment;
             }
         }
+    };
+}
+
+fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type {
+    return struct {
+        const Self = @This();
+
+        pub fn AudioCallback() type {
+            return *const fn (ctx: *ContextType, in: *GenericAudioData(format_type), out: *GenericAudioData(format_type)) void;
+        }
+
+        const Device = FullDuplexDevice(format_type, ContextType);
+
+        const ZeroTransfers = struct {
+            playback: usize = 0,
+            capture: usize = 0,
+
+            fn increment(self: *ZeroTransfers, stream_type: StreamType) void {
+                if (stream_type == .capture) self.capture += 1 else self.playback += 1;
+            }
+
+            fn zero(self: *ZeroTransfers, stream_type: StreamType) void {
+                if (stream_type == .capture) self.capture = 0 else self.playback = 0;
+            }
+
+            fn reachedMax(self: *ZeroTransfers) bool {
+                return self.capture >= MAX_ZERO_TRANSFERS or self.playback >= MAX_ZERO_TRANSFERS;
+            }
+        };
+
+        const Polling = struct {
+            /// the number playback poll file descriptions (pollfds structs)
+            playback_nfd: c_int,
+            /// the number capture poll file descriptions (pollfds structs)
+            capture_nfd: c_int,
+            /// The pollfds structs for both playback and capture streams
+            pollfds: ?*c.pollfd = null,
+            /// The timeout for the poll operation
+            timeout: i32,
+            /// The last time the poll operation was called
+            last_poll: u64,
+            /// The next time the poll operation should be called
+            next_poll: u64,
+        };
+
+        device: Device,
+        running: bool = false,
+        callback: AudioCallback(),
+        ctx: *ContextType,
+        allocator: std.mem.Allocator,
+
+        pub fn init(device: Device, ctx: *ContextType, callback: AudioCallback()) Self {
+            return .{
+                .device = device,
+                .ctx = ctx,
+                .callback = callback,
+                // loop is always connected to a master device and uses the master device's allocator
+                .allocator = device.allocator,
+            };
+        }
+
+        pub fn start(self: *Self) AudioLoopError!void {
+            self.running = true;
+
+            switch (self.device.capture_device.access_type) {
+                AccessType.mmap_interleaved => try self.directWrite(),
+                else => {
+                    log.err("Unsupported access type: {s}", .{@tagName(self.device.capture_device.access_type)});
+                    return AudioLoopError.unsupported;
+                },
+            }
+        }
+
+        pub fn directWrite(self: *Self) !void {
+            _ = self;
+        }
+
+        pub fn xrunRecovery(self: Self, c_err: c_int, stream_type: StreamType) AudioLoopError!void {
+            const err = if (c_err == -c_alsa.EPIPE) AudioLoopError.xrun else AudioLoopError.suspended;
+
+            const pcm_handle = switch (stream_type) {
+                StreamType.capture => self.device.capture_device.pcm_handle,
+                StreamType.playback => self.device.playback_device.pcm_handle,
+            };
+
+            switch (err) {
+                AudioLoopError.xrun => {
+                    log.debug("Xrun detected on {s} device. Attempting recovery...", .{@tagName(stream_type)});
+
+                    const res = c_alsa.snd_pcm_prepare(pcm_handle);
+
+                    if (res < 0) {
+                        log.err("Failed to recover from xrun on {s} device: {s}", .{ @tagName(stream_type), c_alsa.snd_strerror(res) });
+                        return AudioLoopError.xrun;
+                    }
+                },
+
+                AudioLoopError.suspended => {
+                    log.debug("Suspended state detected on {s} device. Attempting recovery...", .{@tagName(stream_type)});
+
+                    var res = c_alsa.snd_pcm_resume(pcm_handle);
+                    var sleep: u64 = 10 * MILLISECONDS; // 10ms
+                    var retries: i32 = MAX_RETRY;
+
+                    while (res == -c_alsa.EAGAIN) {
+                        log.err("Trying to resume device {s}. Retry: {d}", .{ @tagName(stream_type), MAX_RETRY - retries });
+
+                        if (retries == 0) {
+                            log.err("Timeout while trying to resume device {s} after {d} retries.", .{ @tagName(stream_type), MAX_RETRY });
+                            return AudioLoopError.timeout;
+                        }
+
+                        std.time.sleep(sleep);
+                        sleep = @intFromFloat(@as(f32, @floatFromInt(sleep)) * SLEEP_INCREMENT);
+                        retries -= 1;
+
+                        res = c_alsa.snd_pcm_resume(pcm_handle);
+
+                        if (res < 0) {
+                            log.warn("Could not resume device {s}, attempting to prepare.", .{@tagName(stream_type)});
+
+                            res = c_alsa.snd_pcm_prepare(pcm_handle);
+
+                            if (res < 0) {
+                                log.err("Failed to recover from suspended state on {s} device: {s}", .{ @tagName(stream_type), c_alsa.snd_strerror(res) });
+                                return AudioLoopError.xrun;
+                            }
+                        }
+                    }
+                },
+
+                else => {
+                    log.err("Unexpected error: {s}", .{c_alsa.snd_strerror(c_err)});
+                    return AudioLoopError.unexpected;
+                },
+            }
+
+            // check linking status to only prepare the master?
+            const res = c_alsa.snd_pcm_prepare(pcm_handle);
+
+            if (res < 0) {
+                log.err("Failed to recover from xrun on {s} device: {s}", .{ @tagName(stream_type), c_alsa.snd_strerror(res) });
+                return AudioLoopError.xrun;
+            }
+        }
+    };
+}
+
+fn AlignmentVerifier(format_type: FormatType, ContextType: type) type {
+    return struct {
+        pub inline fn verifyAlignment(_: @This(), device: HalfDuplexDevice(format_type, ContextType), area: *c_alsa.snd_pcm_channel_area_t) !void {
+            if (area.first % BYTE_ALIGN != 0) {
+                log.err("Area.first not byte(8) aligned. area.first == {d}", .{area.first});
+                return AudioLoopError.audio_buffer_nonalignment;
+            }
+
+            const bit_depth: c_uint = @intCast(device.audio_format.bit_depth);
+
+            if (area.step % bit_depth != 0) {
+                log.err("Area.step is non-aligned with audio_format.bit_depth. area.step == {d} bits && audio_format.bit_depth == {d} bits", .{ area.step, bit_depth });
+                return AudioLoopError.audio_buffer_nonalignment;
+            }
+
+            const n_channels: c_uint = @intCast(device.channels);
+
+            if (area.step != (n_channels * bit_depth)) {
+                log.err("Area.step is not equal to audio_format.bit_depth * Device.n_channels. area.step == {d} bits && audio_format.bit_depth({d}) * Device.n_channels({d})  == {d} bits", .{
+                    area.step,
+                    bit_depth,
+                    n_channels,
+                    bit_depth * n_channels,
+                });
+                return AudioLoopError.audio_buffer_nonalignment;
+            }
+        }
+    };
+}
+
+fn stateToStr(state: c_uint) []const u8 {
+    return switch (state) {
+        c_alsa.SND_PCM_STATE_OPEN => "OPEN",
+        c_alsa.SND_PCM_STATE_SETUP => "SETUP",
+        c_alsa.SND_PCM_STATE_PREPARED => "PREPARED",
+        c_alsa.SND_PCM_STATE_RUNNING => "RUNNING",
+        c_alsa.SND_PCM_STATE_XRUN => "XRUN",
+        c_alsa.SND_PCM_STATE_DRAINING => "DRAINING",
+        c_alsa.SND_PCM_STATE_PAUSED => "PAUSED",
+        c_alsa.SND_PCM_STATE_SUSPENDED => "SUSPENDED",
+        c_alsa.SND_PCM_STATE_DISCONNECTED => "DISCONNECTED",
+        else => "UNKNOWN",
     };
 }

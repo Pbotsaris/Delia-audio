@@ -9,6 +9,13 @@ const c_alsa = @cImport({
 pub const StreamType = enum(c_uint) {
     playback = c_alsa.SND_PCM_STREAM_PLAYBACK,
     capture = c_alsa.SND_PCM_STREAM_CAPTURE,
+
+    pub fn toggle(self: StreamType) StreamType {
+        return switch (self) {
+            .playback => .capture,
+            .capture => .playback,
+        };
+    }
 };
 
 pub const StartThreshold = enum(u32) {
@@ -50,8 +57,18 @@ pub const ChannelCount = enum(u32) {
     mono = 1,
     stereo = 2,
     quad = 4,
-    surround_5_1 = 6,
-    surround_7_1 = 8,
+    six = 6,
+    eight = 8,
+    ten = 10,
+    twelve = 12,
+    fourteen = 14,
+    sixteen = 16,
+    eighteen = 18,
+    twenty = 20,
+    twenty_two = 22,
+    twenty_four = 24,
+    twenty_six = 26,
+    twenty_eight = 28,
 };
 
 /// interleaved channels     [L1 R1 L2 R2 L3 R3 3R...]

@@ -8,13 +8,15 @@ const log = std.log.scoped(.alsa);
 
 // providing the format and the context in which you callback will ruin from
 // at comptime type will allow operation on device to be type safe
-const Device = alsa.device.HalfDuplexDevice(.signed_16bits_little_endian, PlaybackContext);
+const HalfDuplexDevice = alsa.device.HalfDuplexDevice(.signed_16bits_little_endian, HalfDuplexPlaybackContext);
+const FullDuplexDevice = alsa.device.FullDuplexDevice(.signed_16bits_little_endian, FullDuplexContext);
+const HalfDuplexCaptureDevice = alsa.device.HalfDuplexDevice(.signed_16bits_little_endian, HalfDuplexCaptureContext);
 
-const PlaybackContext = struct {
+const HalfDuplexPlaybackContext = struct {
     const Self = @This();
     w: wave.Wave(f32) = wave.Wave(f32).init(100.0, 0.2, 48000.0),
 
-    pub fn callback(self: *Self, data: Device.AudioDataType()) void {
+    pub fn callback(self: *Self, data: HalfDuplexDevice.AudioDataType()) void {
         self.w.setSampleRate(@floatFromInt(data.sample_rate));
 
         for (0..data.totalSampleCount()) |_| {
@@ -29,15 +31,39 @@ const PlaybackContext = struct {
     }
 };
 
+const HalfDuplexCaptureContext = struct {
+    const Self = @This();
+
+    pub fn callback(_: *Self, data: HalfDuplexDevice.AudioDataType()) void {
+        std.debug.print("in samples: {d}\n", .{data.totalSampleCount()});
+        std.debug.print("in channels: {d}\n", .{data.channels});
+    }
+};
+
+const FullDuplexContext = struct {
+    const Self = @This();
+
+    w: wave.Wave(f32) = wave.Wave(f32).init(100.0, 0.2, 48000.0),
+
+    const AudioDataType = FullDuplexDevice.AudioDataType();
+
+    pub fn callback(self: *Self, in: AudioDataType, out: AudioDataType) void {
+        self.w.setSampleRate(@floatFromInt(in.sample_rate));
+
+        std.debug.print("in samples: {d} out samples: {d}\n", .{ in.totalSampleCount(), out.totalSampleCount() });
+        std.debug.print("in channels: {d} out channels: {d}\n", .{ in.channels, out.channels });
+    }
+};
+
 pub fn playbackSineWave() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
 
     const allocator = gpa.allocator();
 
-    var dev = Device.init(allocator, .{
+    var dev = HalfDuplexDevice.init(allocator, .{
         .sample_rate = .sr_44100,
-        .channels = .quad,
+        .channels = .stereo,
         .stream_type = .playback,
         .buffer_size = .buf_512,
         .ident = "hw:3,0",
@@ -54,10 +80,75 @@ pub fn playbackSineWave() void {
         log.err("Failed to prepare device: {}", .{err});
     };
 
-    var ctx = PlaybackContext{ .w = wave.Wave(f32).init(100.0, 0.2, 48000.0) };
+    var ctx = HalfDuplexPlaybackContext{ .w = wave.Wave(f32).init(100.0, 0.2, 48000.0) };
 
-    dev.start(&ctx, @field(PlaybackContext, "callback")) catch |err| {
+    dev.start(&ctx, @field(HalfDuplexPlaybackContext, "callback")) catch |err| {
         log.err("Failed to start device: {}", .{err});
+    };
+}
+
+pub fn halfDuplexCapture() void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
+
+    const allocator = gpa.allocator();
+
+    var dev = HalfDuplexCaptureDevice.init(allocator, .{
+        .sample_rate = .sr_44100,
+        .channels = .stereo,
+        .stream_type = .capture,
+        .buffer_size = .buf_512,
+        .ident = "hw:3,0",
+    }) catch |err| {
+        log.err("Failed to init device: {}", .{err});
+        return;
+    };
+
+    defer dev.deinit() catch |err| {
+        log.err("Failed to deinit device: {}", .{err});
+    };
+
+    dev.prepare(.min_available) catch |err| {
+        log.err("Failed to prepare device: {}", .{err});
+    };
+
+    var ctx = HalfDuplexCaptureContext{};
+
+    dev.start(&ctx, @field(HalfDuplexCaptureContext, "callback")) catch |err| {
+        log.err("Failed to start device: {}", .{err});
+    };
+}
+
+pub fn fullDuplexCallback() void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
+
+    const allocator = gpa.allocator();
+
+    var dev = FullDuplexDevice.init(allocator, .{
+        .sample_rate = .sr_44100,
+        .buffer_size = .buf_512,
+        // you can have different channel configurations for playback and capture
+        .channels = .{ .playback = .stereo, .capture = .stereo },
+        // you can use different cards for playback and capture
+        .ident = .{ .playback = "hw:3,0", .capture = "hw:3,0" },
+    }) catch |err| {
+        log.err("Failed to init device: {any}", .{err});
+        return;
+    };
+
+    defer dev.deinit() catch |err| {
+        log.err("Failed to deinit device: {any}", .{err});
+    };
+
+    dev.prepare(.min_available) catch |err| {
+        log.err("Failed to prepare device: {any}", .{err});
+    };
+
+    var ctx = FullDuplexContext{};
+
+    dev.start(&ctx, @field(FullDuplexContext, "callback")) catch |err| {
+        log.err("Failed to start device: {any}", .{err});
     };
 }
 
@@ -243,7 +334,7 @@ pub fn usingHardwareToInitDevice() void {
     //  The hardware object will provide the basic info to initialize the device
     //  but it is possible to configure the device with more options.
     //  Below an example of setting the buffer size and access type
-    var device = Device.fromHardware(allocator, hardware, .{ .buffer_size = .buf_1024 }) catch |err| {
+    var device = HalfDuplexDevice.fromHardware(allocator, hardware, .{ .buffer_size = .buf_1024 }) catch |err| {
         log.err("Failed to init device: {}", .{err});
         return;
     };
@@ -293,7 +384,7 @@ pub fn manuallyInitializingDevice() void {
     // playback.supported_settings.?.sample_rates
 
     // device will fail if settings are not supported by the hardware
-    var device = Device.init(allocator, .{
+    var device = HalfDuplexDevice.init(allocator, .{
         // you must provide sample rate, chnanels, format and steam type.
         .sample_rate = .sr_44100,
         .channels = .stereo,
