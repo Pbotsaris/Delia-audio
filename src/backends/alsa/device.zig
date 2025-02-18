@@ -84,6 +84,7 @@ pub const AudioLoopError = error{
     timeout,
     unsupported,
     audio_buffer_nonalignment,
+    poll_alloc,
 };
 
 pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) type {
@@ -801,8 +802,7 @@ fn HalfDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
 
                     self.callback(self.ctx, &audio_data);
 
-                    const frames_actually_transfered =
-                        c_alsa.snd_pcm_mmap_commit(self.device.pcm_handle, offset, expected_to_transfer);
+                    const frames_actually_transfered = c_alsa.snd_pcm_mmap_commit(self.device.pcm_handle, offset, expected_to_transfer);
 
                     log.debug("Transferred {d} frames", .{frames_actually_transfered});
 
@@ -906,6 +906,7 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
         }
 
         const Device = FullDuplexDevice(format_type, ContextType);
+        const HalfDevice = HalfDuplexDevice(format_type, ContextType);
 
         const ZeroTransfers = struct {
             playback: usize = 0,
@@ -919,6 +920,10 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
                 if (stream_type == .capture) self.capture = 0 else self.playback = 0;
             }
 
+            fn get(self: *ZeroTransfers, stream_type: StreamType) usize {
+                return if (stream_type == .capture) self.capture else self.playback;
+            }
+
             fn reachedMax(self: *ZeroTransfers) bool {
                 return self.capture >= MAX_ZERO_TRANSFERS or self.playback >= MAX_ZERO_TRANSFERS;
             }
@@ -926,17 +931,44 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
 
         const Polling = struct {
             /// the number playback poll file descriptions (pollfds structs)
-            playback_nfd: c_int,
+            playback_nfd: usize = 0,
             /// the number capture poll file descriptions (pollfds structs)
-            capture_nfd: c_int,
+            capture_nfd: usize = 0,
             /// The pollfds structs for both playback and capture streams
-            pollfds: ?*c.pollfd = null,
+            pollfds: std.ArrayList(c.pollfd),
             /// The timeout for the poll operation
             timeout: i32,
             /// The last time the poll operation was called
-            last_poll: u64,
+            last_poll: u64 = 0,
             /// The next time the poll operation should be called
-            next_poll: u64,
+            next_poll: u64 = 0,
+
+            allocator: std.mem.Allocator,
+
+            pub fn init(allocator: std.mem.Allocator, device: HalfDevice) Polling {
+                const period_usecs: usize = @intFromFloat(@floor((@as(f64, @floatFromInt(@intFromEnum(device.buffer_size))) /
+                    @as(f64, @floatFromInt(device.sample_rate))) * 1_000_000.0));
+
+                const timeout_factor: f64 = 1.5;
+                const timeout: i32 = @intFromFloat(@as(f64, @floatFromInt(period_usecs)) * timeout_factor);
+
+                return .{
+                    .allocator = allocator,
+                    .timeout = timeout,
+                    .pollfds = std.ArrayList(c.pollfd).init(allocator),
+                };
+            }
+
+            pub fn setPollFileDescriptorsAndReserve(self: *Polling, playback_nfd: usize, capture_nfd: usize) !void {
+                self.capture_nfd = capture_nfd;
+                self.playback_nfd = playback_nfd;
+
+                try self.pollfds.ensureTotalCapacity(playback_nfd + capture_nfd);
+            }
+
+            pub fn deinit(self: *Polling) void {
+                self.pollfds.deinit();
+            }
         };
 
         device: Device,
@@ -944,6 +976,11 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
         callback: AudioCallback(),
         ctx: *ContextType,
         allocator: std.mem.Allocator,
+        polling: Polling,
+        stopped: bool = false,
+        zero_transfers: ZeroTransfers = ZeroTransfers{},
+        maybe_playback_areas: ?*c_alsa.snd_pcm_channel_area_t = null,
+        maybe_capture_areas: ?*c_alsa.snd_pcm_channel_area_t = null,
 
         pub fn init(device: Device, ctx: *ContextType, callback: AudioCallback()) Self {
             return .{
@@ -952,14 +989,23 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
                 .callback = callback,
                 // loop is always connected to a master device and uses the master device's allocator
                 .allocator = device.allocator,
+                // calculate timeout based on playback and capture and playback must have the same sample rate and buffer size
+                .polling = Polling.init(device.allocator, device.playback_device),
             };
         }
 
+        pub fn deinit(self: *Self) !void {
+            self.polling.deinit();
+        }
+
         pub fn start(self: *Self) AudioLoopError!void {
+            try self.preparePoll();
+            errdefer self.polling.deinit();
+
             self.running = true;
 
             switch (self.device.capture_device.access_type) {
-                AccessType.mmap_interleaved => try self.directWrite(),
+                AccessType.mmap_interleaved => try self.linkedDirectWrite(),
                 else => {
                     log.err("Unsupported access type: {s}", .{@tagName(self.device.capture_device.access_type)});
                     return AudioLoopError.unsupported;
@@ -967,75 +1013,225 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
             }
         }
 
-        pub fn directWrite(self: *Self) !void {
-            _ = self;
+        fn preparePoll(self: *Self) !void {
+            const pnfd = c_alsa.snd_pcm_poll_descriptors_count(self.device.playback_device.pcm_handle);
+            const cnfd = c_alsa.snd_pcm_poll_descriptors_count(self.device.capture_device.pcm_handle);
+
+            self.polling.setPollFileDescriptorsAndReserve(@intCast(pnfd), @intCast(cnfd)) catch {
+                log.err("Failed to allocate poll descriptors.", .{});
+                return AudioLoopError.poll_alloc;
+            };
         }
 
-        pub fn xrunRecovery(self: Self, c_err: c_int, stream_type: StreamType) AudioLoopError!void {
-            const err = if (c_err == -c_alsa.EPIPE) AudioLoopError.xrun else AudioLoopError.suspended;
+        fn linkedDirectWrite(self: *Self) !void {
+            const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
+            self.stopped = true;
 
-            const pcm_handle = switch (stream_type) {
-                StreamType.capture => self.device.capture_device.pcm_handle,
-                StreamType.playback => self.device.playback_device.pcm_handle,
-            };
+            while (self.running) {
+                try self.checkState(.playback);
+                try self.checkState(.capture);
 
-            switch (err) {
-                AudioLoopError.xrun => {
-                    log.debug("Xrun detected on {s} device. Attempting recovery...", .{@tagName(stream_type)});
+                const skip = try self.checkLinkedAvailability(buffer_size);
+                if (skip) continue;
 
-                    const res = c_alsa.snd_pcm_prepare(pcm_handle);
+                // in frames
+                var to_transfer = buffer_size;
+                var playback_offset: c_ulong = 0;
+                var capture_offset: c_ulong = 0;
 
-                    if (res < 0) {
-                        log.err("Failed to recover from xrun on {s} device: {s}", .{ @tagName(stream_type), c_alsa.snd_strerror(res) });
-                        return AudioLoopError.xrun;
-                    }
+                while (to_transfer > 0) {
+                    var playback_expected_transfer = to_transfer;
+                    var capture_expected_transfer = to_transfer;
+
+                    const playback_buffer = try self.begin(&playback_offset, &playback_expected_transfer, .playback);
+                    const capture_buffer = try self.begin(&capture_offset, &capture_expected_transfer, .capture);
+
+                    var capture_data =
+                        GenericAudioData(format_type)
+                        .init(
+                        capture_buffer,
+                        self.device.capture_device.channels,
+                        self.device.capture_device.sample_rate,
+                        self.device.capture_device.audio_format,
+                    );
+
+                    var playback_data =
+                        GenericAudioData(format_type)
+                        .init(
+                        playback_buffer,
+                        self.device.playback_device.channels,
+                        self.device.playback_device.sample_rate,
+                        self.device.playback_device.audio_format,
+                    );
+
+                    self.callback(self.ctx, &capture_data, &playback_data);
+
+                    const playback_frames_transferred = try self.commit(playback_offset, playback_expected_transfer, .playback);
+
+                    // we don't care about the capture frames transferred for snd_pcm_link devices
+                    _ = try self.commit(capture_offset, capture_expected_transfer, .capture);
+
+                    to_transfer -= @as(c_ulong, @intCast(playback_frames_transferred));
+                }
+            }
+        }
+
+        inline fn checkState(self: Self, stream_type: StreamType) !void {
+            const pcm_device = if (stream_type == .capture) self.device.capture_device.pcm_handle else self.device.playback_device.pcm_handle;
+
+            const state: c_uint = c_alsa.snd_pcm_state(pcm_device);
+
+            switch (state) {
+                c_alsa.SND_PCM_STATE_XRUN => {
+                    try self.xrunRecovery(-c_alsa.EPIPE, stream_type);
                 },
 
-                AudioLoopError.suspended => {
-                    log.debug("Suspended state detected on {s} device. Attempting recovery...", .{@tagName(stream_type)});
+                c_alsa.SND_PCM_STATE_SUSPENDED => try self.xrunRecovery(-c_alsa.ESTRPIPE, .playback),
 
+                else => {
+                    if (state < 0) {
+                        log.debug("Unexpected state error: {s}", .{c_alsa.snd_strerror(state)});
+                        return AudioLoopError.unexpected;
+                    }
+                },
+            }
+        }
+
+        inline fn checkLinkedAvailability(self: *Self, buffer_size: c_ulong) !bool {
+            const avail = c_alsa.snd_pcm_avail_update(self.device.playback_device.pcm_handle);
+
+            if (avail < 0) {
+                try self.xrunRecovery(@intCast(avail), .playback);
+                return true;
+            }
+
+            if (avail < buffer_size and self.stopped) {
+                const err = c_alsa.snd_pcm_start(self.device.playback_device.pcm_handle);
+
+                if (err < 0) {
+                    log.err("Failed to start playback pcm: {s}", .{c_alsa.snd_strerror(err)});
+                    return AudioLoopError.start;
+                }
+
+                self.stopped = false;
+                return true;
+            }
+
+            if (avail < buffer_size and !self.stopped) {
+                const err = c_alsa.snd_pcm_wait(self.device.playback_device.pcm_handle, self.device.playback_device.timeout);
+
+                if (err < 0) {
+                    try self.xrunRecovery(err, .playback);
+                    self.stopped = true;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        fn begin(self: *Self, offset: *c_alsa.snd_pcm_uframes_t, expected_to_transfer: *c_alsa.snd_pcm_uframes_t, stream_type: StreamType) ![]u8 {
+            var maybe_areas = if (stream_type == .capture) self.maybe_capture_areas else self.maybe_playback_areas;
+            const device = if (stream_type == .capture) self.device.capture_device else self.device.playback_device;
+
+            const res = c_alsa.snd_pcm_mmap_begin(device.pcm_handle, &maybe_areas, offset, expected_to_transfer);
+
+            if (res < 0) {
+                try self.xrunRecovery(res, stream_type);
+                self.stopped = true;
+            }
+
+            const areas = maybe_areas orelse return AudioLoopError.unexpected;
+            const addr = areas.addr orelse return AudioLoopError.unexpected;
+
+            const verifier = AlignmentVerifier(format_type, ContextType){};
+
+            try verifier.verifyAlignment(device, areas);
+
+            const step: c_ulong = @divFloor(areas.step, 8);
+            const buf_start: c_ulong = (@divFloor(areas.first, 8)) + (offset.* * step);
+
+            return @as([*]u8, @ptrCast(addr))[buf_start .. buf_start + expected_to_transfer.* * step];
+        }
+
+        inline fn commit(self: *Self, offset: c_ulong, expected_to_transfer: c_ulong, stream_type: StreamType) !c_long {
+            const pcm_handle = if (stream_type == .capture) self.device.capture_device.pcm_handle else self.device.playback_device.pcm_handle;
+
+            const frames_actually_transfered = c_alsa.snd_pcm_mmap_commit(pcm_handle, offset, expected_to_transfer);
+
+            log.debug("Stream {s}: transferred {d} frames", .{ @tagName(stream_type), frames_actually_transfered });
+
+            if (frames_actually_transfered < 0) {
+                try self.xrunRecovery(@intCast(frames_actually_transfered), .playback);
+            } else if (frames_actually_transfered != expected_to_transfer) try self.xrunRecovery(-c_alsa.EPIPE, .playback);
+
+            if (frames_actually_transfered == 0) {
+                const state = c_alsa.snd_pcm_state(pcm_handle);
+
+                // when snd_pcm_link, capture (which is the slave) will yield zero transfers, so we skip the check
+                if (!(self.device.is_linked and stream_type == .capture and state == c_alsa.SND_PCM_STATE_PREPARED)) {
+                    self.zero_transfers.increment(stream_type);
+                }
+            } else self.zero_transfers.zero(stream_type);
+
+            if (self.zero_transfers.reachedMax()) {
+                log.err("Too many consecutive zero transfers. Playback: {d}, Capture: {d}. Stopping device.", .{
+                    self.zero_transfers.get(.playback),
+                    self.zero_transfers.get(.capture),
+                });
+
+                self.stopped = true;
+                return AudioLoopError.xrun;
+            }
+
+            return frames_actually_transfered;
+        }
+
+        inline fn xrunRecovery(self: Self, c_err: c_int, stream_type: StreamType) AudioLoopError!void {
+            const err = if (c_err == -c_alsa.EPIPE) AudioLoopError.xrun else AudioLoopError.suspended;
+
+            const pcm_handle = if (stream_type == .capture) self.device.capture_device.pcm_handle else self.device.playback_device.pcm_handle;
+
+            const needs_prepare = switch (err) {
+                AudioLoopError.xrun => true,
+
+                AudioLoopError.suspended => blk: {
                     var res = c_alsa.snd_pcm_resume(pcm_handle);
                     var sleep: u64 = 10 * MILLISECONDS; // 10ms
                     var retries: i32 = MAX_RETRY;
 
                     while (res == -c_alsa.EAGAIN) {
-                        log.err("Trying to resume device {s}. Retry: {d}", .{ @tagName(stream_type), MAX_RETRY - retries });
+                        log.debug("Trying to resume device. Retry: {d}", .{MAX_RETRY - retries});
 
                         if (retries == 0) {
-                            log.err("Timeout while trying to resume device {s} after {d} retries.", .{ @tagName(stream_type), MAX_RETRY });
+                            log.err("Timeout while trying to resume device after {d} retries.", .{MAX_RETRY});
                             return AudioLoopError.timeout;
                         }
 
                         std.time.sleep(sleep);
+
                         sleep = @intFromFloat(@as(f32, @floatFromInt(sleep)) * SLEEP_INCREMENT);
                         retries -= 1;
-
                         res = c_alsa.snd_pcm_resume(pcm_handle);
-
-                        if (res < 0) {
-                            log.warn("Could not resume device {s}, attempting to prepare.", .{@tagName(stream_type)});
-
-                            res = c_alsa.snd_pcm_prepare(pcm_handle);
-
-                            if (res < 0) {
-                                log.err("Failed to recover from suspended state on {s} device: {s}", .{ @tagName(stream_type), c_alsa.snd_strerror(res) });
-                                return AudioLoopError.xrun;
-                            }
-                        }
                     }
+
+                    if (res < 0) break :blk true;
+                    break :blk false;
                 },
 
                 else => {
                     log.err("Unexpected error: {s}", .{c_alsa.snd_strerror(c_err)});
                     return AudioLoopError.unexpected;
                 },
-            }
+            };
 
-            // check linking status to only prepare the master?
+            if (!needs_prepare) return;
+            if (stream_type == .capture and self.device.is_linked) return;
+
             const res = c_alsa.snd_pcm_prepare(pcm_handle);
 
             if (res < 0) {
-                log.err("Failed to recover from xrun on {s} device: {s}", .{ @tagName(stream_type), c_alsa.snd_strerror(res) });
+                log.err("Failed to recover from xrun: {s}", .{c_alsa.snd_strerror(res)});
                 return AudioLoopError.xrun;
             }
         }

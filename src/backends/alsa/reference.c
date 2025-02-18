@@ -1,7 +1,6 @@
 // #include "config.h"
 
-#include "../include/asoundlib.h"
-#include <errno.h>
+#include "../include/asoundlib.h" #include <errno.h>
 #include <getopt.h>
 #include <math.h>
 #include <sched.h>
@@ -644,6 +643,7 @@ static int direct_loop(snd_pcm_t *handle,
       first = 1;
       continue;
     }
+         
     if (avail < period_size) {
       if (first) {
         first = 0;

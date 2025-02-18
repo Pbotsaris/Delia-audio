@@ -29,8 +29,8 @@ const Hardware = backends.jack.Hardware;
 //}
 pub fn main() !void {
 
-    //    examplePlaybackAndGraph() catch |err| {
     //        log.err("{any}", .{err});
+    //    examplePlaybackAndGraph() catch |err| {
 
     //        return err;
     //    };
@@ -39,6 +39,7 @@ pub fn main() !void {
     //backends.alsa.examples.selectAudioPortCounterpart();
     // backends.alsa.examples.fullDuplexCallback();
     backends.alsa.examples.fullDuplexCallback();
+    // backends.alsa.examples.halfDuplexCapture();
     //backends.alsa.examples.playbackSineWave();
 
     // backends.alsa.examples.usingHardwareToInitDevice();
