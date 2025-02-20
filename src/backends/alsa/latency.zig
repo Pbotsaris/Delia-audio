@@ -7,86 +7,87 @@ const c_alsa = @cImport({
 
 const log = std.log.scoped(.alsa);
 
-pub const Probe = struct {
-    start_time: TimeSpec,
-    hardware_buffer_size: usize,
-    sample_rate: u32,
-    frames_processed: usize = 0,
-    handle: ?*c_alsa.snd_pcm_t,
+const s_to_us = 1_000_000;
 
-    pub fn init(handle: ?*c_alsa.snd_pcm_t, sample_rate: u32, hardware_buffer_size: u32) !Probe {
+const ProbeOptions = struct {
+    sample_rate: u32,
+    hardware_buffer_size: u32,
+    probe_cycles: u32 = 3,
+};
+
+pub const Probe = struct {
+    start_time: ?TimeSpec = null,
+    hardware_buffer_size: u32,
+    sample_rate: u32,
+    probe_cycles: u32,
+    frames_processed: usize = 0,
+    max_frames: usize,
+    latency: TimestampDiff,
+
+    pub fn init(opts: ProbeOptions) Probe {
         return .{
-            .start_time = try getMonotonicTime(),
-            .sample_rate = sample_rate,
-            .hardware_buffer_size = @intCast(hardware_buffer_size),
+            .sample_rate = opts.sample_rate,
+            .hardware_buffer_size = opts.hardware_buffer_size,
             .frames_processed = 0,
-            .handle = handle,
+            .probe_cycles = opts.probe_cycles,
+            .max_frames = opts.probe_cycles * opts.hardware_buffer_size,
+            .latency = TimestampDiff{ .sec = 0, .usec = 0 },
+        };
+    }
+
+    pub fn start(self: *Probe) void {
+        self.start_time = getMonotonicTime() catch {
+            return;
         };
     }
 
     pub fn addFrames(self: *Probe, frames: c_long) void {
-        self.frames_processed += @as(usize, @intCast(frames));
-    }
+        self.frames_processed += @intCast(frames);
 
-    pub fn framesToMicros(self: Probe, frames: usize) i64 {
-        return @intCast(@divFloor(frames * 1_000_000, self.sample_rate));
-    }
-
-    pub fn logLatencyStats(self: *Probe) void {
-        const now = getMonotonicTime() catch {
-            log.warn("Failed to get current time", .{});
-            return;
-        };
-
-        const avail = c_alsa.snd_pcm_avail(self.handle);
-        if (avail < 0) {
-            log.warn("Failed to get available frames: {s}", .{c_alsa.snd_strerror(@intCast(avail))});
-            return;
+        if (self.frames_processed >= self.max_frames) {
+            self.calcLatency();
+            // self.logLatency();
+            self.reset();
         }
+    }
 
-        const buffer_size = self.hardware_buffer_size;
-        const fill = if (avail >= 0) buffer_size - @as(usize, @intCast(avail)) else 0;
-
-        const expected_time = TimestampDiff.fromMicros(self.framesToMicros(self.frames_processed));
-
-        const actual_time = self.start_time.diff(now);
-        const total_drift = expected_time.diff(actual_time);
-
-        var actual_time_buff: [64]u8 = undefined;
-        var drift_buff: [64]u8 = undefined;
-        var expected_time_buff: [64]u8 = undefined;
-
-        const actual_time_str = actual_time.formatBuf(&actual_time_buff) catch {
-            log.warn("Failed to format real time.", .{});
+    pub fn reset(self: *Probe) void {
+        self.start_time = getMonotonicTime() catch {
             return;
         };
 
-        const expected_time_str = expected_time.formatBuf(&expected_time_buff) catch {
-            log.warn("Failed to format device time.", .{});
+        self.frames_processed = 0;
+    }
+
+    pub fn calcLatency(self: *Probe) void {
+        const now = getMonotonicTime() catch {
             return;
         };
 
-        const drift_str = total_drift.formatBuf(&drift_buff) catch {
+        const expect_time = TimestampDiff.fromMicros(self.framesToMicros());
+
+        const start_time = self.start_time orelse {
+            log.warn("Failed to calculate latency. Start time is null.", .{});
+            return;
+        };
+
+        const actual_time = start_time.diff(now);
+        self.latency = expect_time.diff(actual_time);
+    }
+
+    pub inline fn framesToMicros(self: Probe) i64 {
+        return @intCast(@divFloor(self.frames_processed * s_to_us, self.sample_rate));
+    }
+
+    pub fn logLatency(self: Probe) void {
+        var latency_buff: [64]u8 = undefined;
+
+        const drift_str = self.latency.formatBuf(&latency_buff) catch {
             log.warn("Failed to format difference.", .{});
             return;
         };
 
-        log.info(
-            \\
-            \\    Time Stats:
-            \\    Expected time:   {s}
-            \\    Actual time:     {s}
-            \\    Total Drift:     {s}
-            \\    Buffer fill:   {d}/{d} frames
-            \\    Frames processed: {d}
-        , .{
-            expected_time_str,
-            actual_time_str,
-            drift_str,
-            fill,
-            buffer_size,
-            self.frames_processed,
-        });
+        log.info("Latency in {d} frames processed: {s}", .{ self.frames_processed, drift_str });
     }
 };
 
@@ -117,7 +118,10 @@ const TimeSpec = struct {
 
 fn getMonotonicTime() !TimeSpec {
     var timespec: c_alsa.timespec = undefined;
-    if (c_alsa.clock_gettime(c_alsa.CLOCK_MONOTONIC_RAW, &timespec) != 0) {
+    const err = c_alsa.clock_gettime(c_alsa.CLOCK_MONOTONIC_RAW, &timespec);
+
+    if (err != 0) {
+        log.warn("Could not start latency.Probe. Failed to get current time: {s} ", .{c_alsa.snd_strerror(err)});
         return error.ClockError;
     }
     return .{

@@ -141,7 +141,7 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
         /// Defines the transfer method used by the audio callback (e.g., read/write interleaved,  read/write non-interleaved , mmap intereaved).
         /// Currently only mmap interleaved is supported.
         access_type: AccessType = AccessType.mmap_interleaved,
-        /// Audio sample format (e.g., 16-bit signed little-endian).
+        /// Manages Audio sample format (e.g., 16-bit signed little-endian).
         audio_format: Format(T),
         /// TODO: Description
         strategy: Strategy = Strategy.min_available,
@@ -158,6 +158,9 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
         /// wether HalfDuplexDevice.prepare will explicitly call snd_pcm_prepare.
         /// Useful snd_pcm_link devices and don't want to call prepare on the slave device
         must_prepare: bool = true,
+
+        // use to probe latency of the device
+        probe: latency.Probe,
 
         const DeviceOptionsFromHardware = struct {
             mode: Mode = Mode.none,
@@ -381,6 +384,10 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 // TOOD: see if we still need this buffer
                 .transfer_buffer = try allocator.alloc(u8, buffer_bytes),
                 .must_prepare = opts.must_prepare,
+                .probe = latency.Probe.init(.{
+                    .sample_rate = sample_rate,
+                    .hardware_buffer_size = @as(u32, @intCast(hardware_buffer_size)),
+                }),
             };
         }
 
@@ -979,12 +986,10 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
         }
 
         fn linkedDirectWrite(self: *Self) !void {
-            //           const samples_rate = self.device.playback_device.sample_rate;
-            //         const hardware_buffer_size = self.device.playback_device.hardware_buffer_size;
-
             const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
-
             self.stopped = true;
+
+            self.device.playback_device.probe.start();
 
             try self.checkState(.playback);
             while (self.running) {
@@ -1029,6 +1034,7 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
                     // we don't care about the capture frames transferred for snd_pcm_link devices
                     _ = try self.commit(capture_offset, capture_expected_transfer, .capture);
 
+                    self.device.playback_device.probe.addFrames(playback_frames_transferred);
                     to_transfer -= @as(c_ulong, @intCast(playback_frames_transferred));
                 }
             }

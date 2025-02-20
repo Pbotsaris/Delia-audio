@@ -47,11 +47,18 @@ const FullDuplexContext = struct {
 
     const AudioDataType = FullDuplexDevice.AudioDataType();
 
-    pub fn callback(self: *Self, in: AudioDataType, _: AudioDataType) void {
+    pub fn callback(self: *Self, in: AudioDataType, out: AudioDataType) void {
         self.w.setSampleRate(@floatFromInt(in.sample_rate));
 
-        //    std.debug.print("in samples: {d} out samples: {d}\n", .{ in.totalSampleCount(), out.totalSampleCount() });
-        //   std.debug.print("in channels: {d} out channels: {d}\n", .{ in.channels, out.channels });
+        for (0..out.totalSampleCount()) |_| {
+            const sample = self.w.sineSample();
+
+            for (0..out.channels) |_| {
+                out.writeSample(sample) catch {
+                    return;
+                };
+            }
+        }
     }
 };
 
