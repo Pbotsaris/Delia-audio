@@ -50,6 +50,7 @@ const HalfDuplexDeviceOptions = struct {
     n_periods: u32 = 5,
     start_thresh: StartThreshold = .fill_one_period,
     must_prepare: bool = true,
+    probe_callback: ?latency.ProbeCallback = null,
     // not exposed to the caller for now
     // access_type: AccessType = AccessType.mmap_interleaved,
     // mode: Mode = Mode.none,
@@ -90,12 +91,17 @@ pub const AudioLoopError = error{
     poll_alloc,
 };
 
-pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) type {
-    const T = format_type.ToType();
+pub const DeviceComptimeOptions = struct {
+    format: FormatType,
+    probe_enabled: bool = false,
+};
+
+pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptimeOptions) type {
+    const T = comptime_opts.format.ToType();
 
     return struct {
         pub fn AudioDataType() type {
-            return *GenericAudioData(format_type);
+            return *GenericAudioData(comptime_opts.format);
         }
 
         pub fn maxFormatSize() usize {
@@ -104,9 +110,10 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
 
         const Self = @This();
         // defined at compile time for this device type
-        pub const FORMAT_TYPE = format_type;
+        pub const FORMAT_TYPE = comptime_opts.format;
+        pub const PROBE_ENABLED = comptime_opts.probe_enabled;
 
-        const AudioLoop = HalfDuplexAudioLoop(format_type, ContextType);
+        const AudioLoop = HalfDuplexAudioLoop(ContextType, comptime_opts);
         pub const AudioCallback = AudioLoop.AudioCallback();
 
         /// Pointer to the PCM device handle.
@@ -159,8 +166,7 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
         /// Useful snd_pcm_link devices and don't want to call prepare on the slave device
         must_prepare: bool = true,
 
-        // use to probe latency of the device
-        probe: latency.Probe,
+        probe: ?latency.Probe,
 
         const DeviceOptionsFromHardware = struct {
             mode: Mode = Mode.none,
@@ -365,6 +371,18 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
             // either start with after filling one hardware buffer size or as soon as possible
             const start_tresh: u32 = @as(u32, @intCast(@intFromEnum(opts.buffer_size))) * opts.n_periods * @as(u32, @intCast(@intFromEnum(opts.start_thresh)));
 
+            var probe: ?latency.Probe = null;
+
+            if (PROBE_ENABLED) {
+                if (opts.probe_callback) |cb| {
+                    probe = latency.Probe.init(cb, .{
+                        .sample_rate = sample_rate,
+                        .hardware_buffer_size = @intCast(hardware_buffer_size),
+                        .probe_cycles = 10,
+                    });
+                } else log.warn("Probe is enabled but no callback was provided. Will call noop callback.", .{});
+            }
+
             return Self{
                 .pcm_handle = pcm_handle,
                 .hw_params = params,
@@ -384,10 +402,7 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 // TOOD: see if we still need this buffer
                 .transfer_buffer = try allocator.alloc(u8, buffer_bytes),
                 .must_prepare = opts.must_prepare,
-                .probe = latency.Probe.init(.{
-                    .sample_rate = sample_rate,
-                    .hardware_buffer_size = @as(u32, @intCast(hardware_buffer_size)),
-                }),
+                .probe = probe,
             };
         }
 
@@ -582,27 +597,32 @@ const FullDuplexDeviceOptions = struct {
     n_periods: u32 = 5,
     start_thresh: StartThreshold = .fill_one_period,
     master_device: StreamType = StreamType.playback,
+    probe_callback: ?latency.ProbeCallback = null,
 };
 
-pub fn FullDuplexDevice(comptime format_type: FormatType, ContextType: type) type {
-    const T = format_type.ToType();
+pub fn FullDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptimeOptions) type {
+    const T = comptime_opts.format.ToType();
 
     // todo implement FullDuplexAudioLoop
 
     return struct {
         pub fn AudioDataType() type {
-            return *GenericAudioData(format_type);
+            return *GenericAudioData(comptime_opts.format);
         }
 
         pub fn maxFormatSize() usize {
             return Format(T).maxSize();
         }
 
-        const Self = @This();
-        const AudioCallback = FullDuplexAudioLoop(format_type, ContextType).AudioCallback();
+        pub const PROBE_ENABLED = comptime_opts.probe_enabled;
+        pub const FORMAT_TYPE = comptime_opts.format;
 
-        playback_device: HalfDuplexDevice(format_type, ContextType),
-        capture_device: HalfDuplexDevice(format_type, ContextType),
+        const Self = @This();
+
+        const AudioCallback = FullDuplexAudioLoop(ContextType, comptime_opts).AudioCallback();
+
+        playback_device: HalfDuplexDevice(ContextType, comptime_opts),
+        capture_device: HalfDuplexDevice(ContextType, comptime_opts),
         allocator: std.mem.Allocator,
         master_device: StreamType,
         same_channel_config: bool,
@@ -610,7 +630,7 @@ pub fn FullDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
 
         // note that the full duplex does not offer resampling capabilities
         pub fn init(allocator: std.mem.Allocator, opts: FullDuplexDeviceOptions) DeviceHardwareError!Self {
-            const Device = HalfDuplexDevice(format_type, ContextType);
+            const Device = HalfDuplexDevice(ContextType, comptime_opts);
 
             const is_linked = std.mem.eql(u8, opts.ident.playback, opts.ident.capture);
 
@@ -622,8 +642,9 @@ pub fn FullDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 .buffer_size = opts.buffer_size,
                 .timeout = opts.timeout,
                 .n_periods = opts.n_periods,
-                .start_thresh = opts.start_thresh,
                 // we don't want to snd_pcm_prepare the slave device when linked linked
+                .start_thresh = opts.start_thresh,
+                .probe_callback = opts.probe_callback,
             });
 
             // note that slave and master is only relevant when the devices are linked
@@ -637,6 +658,7 @@ pub fn FullDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 .n_periods = opts.n_periods,
                 .start_thresh = opts.start_thresh,
                 .must_prepare = !is_linked,
+                .probe_callback = opts.probe_callback,
             });
 
             if (is_linked) {
@@ -665,7 +687,7 @@ pub fn FullDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
         }
 
         pub fn start(self: Self, ctx: *ContextType, callback: AudioCallback) !void {
-            var audio_loop = FullDuplexAudioLoop(format_type, ContextType).init(self, ctx, callback);
+            var audio_loop = FullDuplexAudioLoop(ContextType, comptime_opts).init(self, ctx, callback);
             try audio_loop.start();
         }
 
@@ -697,15 +719,17 @@ const SLEEP_INCREMENT = 1.2;
 const MAX_ZERO_TRANSFERS = 5;
 const BYTE_ALIGN = 8;
 
-fn HalfDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type {
+fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptimeOptions) type {
     return struct {
         const Self = @This();
+
+        const format_type = comptime_opts.format;
 
         pub fn AudioCallback() type {
             return *const fn (ctx: *ContextType, data: *GenericAudioData(format_type)) void;
         }
 
-        device: HalfDuplexDevice(format_type, ContextType),
+        device: HalfDuplexDevice(ContextType, comptime_opts),
         running: bool = false,
         callback: AudioCallback(),
         ctx: *ContextType,
@@ -921,16 +945,18 @@ fn HalfDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
     };
 }
 
-fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type {
+fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) type {
     return struct {
         const Self = @This();
+
+        const format_type = comptime_opts.format;
 
         pub fn AudioCallback() type {
             return *const fn (ctx: *ContextType, in: *GenericAudioData(format_type), out: *GenericAudioData(format_type)) void;
         }
 
-        const Device = FullDuplexDevice(format_type, ContextType);
-        const HalfDevice = HalfDuplexDevice(format_type, ContextType);
+        const Device = FullDuplexDevice(ContextType, comptime_opts);
+        const HalfDevice = HalfDuplexDevice(ContextType, comptime_opts);
 
         const ZeroTransfers = struct {
             playback: usize = 0,
@@ -989,10 +1015,13 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
             const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
             self.stopped = true;
 
-            self.device.playback_device.probe.start();
+            // comptime check
+            if (Device.PROBE_ENABLED) {
+                if (self.device.playback_device.probe) |*p| p.start();
+            }
 
-            try self.checkState(.playback);
             while (self.running) {
+                try self.checkState(.playback);
                 try self.checkState(.capture);
 
                 const skip = try self.checkLinkedAvailability(buffer_size);
@@ -1034,7 +1063,10 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
                     // we don't care about the capture frames transferred for snd_pcm_link devices
                     _ = try self.commit(capture_offset, capture_expected_transfer, .capture);
 
-                    self.device.playback_device.probe.addFrames(playback_frames_transferred);
+                    if (Device.PROBE_ENABLED) {
+                        if (self.device.playback_device.probe) |*p| p.addFrames(playback_frames_transferred);
+                    }
+
                     to_transfer -= @as(c_ulong, @intCast(playback_frames_transferred));
                 }
             }
@@ -1108,7 +1140,7 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
             const areas = maybe_areas orelse return AudioLoopError.unexpected;
             const addr = areas.addr orelse return AudioLoopError.unexpected;
 
-            const verifier = AlignmentVerifier(format_type, ContextType){};
+            const verifier = AlignmentVerifier(ContextType, comptime_opts){};
 
             try verifier.verifyAlignment(device, areas);
 
@@ -1202,9 +1234,9 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
     };
 }
 
-fn AlignmentVerifier(format_type: FormatType, ContextType: type) type {
+fn AlignmentVerifier(ContextType: type, comptime comptime_opts: DeviceComptimeOptions) type {
     return struct {
-        pub inline fn verifyAlignment(_: @This(), device: HalfDuplexDevice(format_type, ContextType), area: *c_alsa.snd_pcm_channel_area_t) !void {
+        pub inline fn verifyAlignment(_: @This(), device: HalfDuplexDevice(ContextType, comptime_opts), area: *c_alsa.snd_pcm_channel_area_t) !void {
             if (area.first % BYTE_ALIGN != 0) {
                 log.err("Area.first not byte(8) aligned. area.first == {d}", .{area.first});
                 return AudioLoopError.audio_buffer_nonalignment;

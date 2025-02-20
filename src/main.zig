@@ -38,7 +38,7 @@ pub fn main() !void {
     //backends.alsa.examples.findAndPrintCardPortInfo("USB");
     //backends.alsa.examples.selectAudioPortCounterpart();
     // backends.alsa.examples.fullDuplexCallback();
-    backends.alsa.examples.fullDuplexCallback();
+    backends.alsa.examples.fullDuplexCallbackWithLatencyProbe();
     // backends.alsa.examples.halfDuplexCapture();
     //backends.alsa.examples.playbackSineWave();
 

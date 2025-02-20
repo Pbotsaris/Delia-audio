@@ -9,11 +9,24 @@ const log = std.log.scoped(.alsa);
 
 const s_to_us = 1_000_000;
 
+pub fn noopCallback(_: LatencyData) void {}
+
 const ProbeOptions = struct {
     sample_rate: u32,
     hardware_buffer_size: u32,
     probe_cycles: u32 = 3,
 };
+
+pub const LatencyData = struct {
+    start_time: TimeSpec,
+    end_time: TimeSpec,
+    expect_time: TimestampDiff,
+    actual_time: TimestampDiff,
+    latency: TimestampDiff,
+    frames_processed: usize,
+};
+
+pub const ProbeCallback = *const fn (probe: LatencyData) void;
 
 pub const Probe = struct {
     start_time: ?TimeSpec = null,
@@ -22,16 +35,16 @@ pub const Probe = struct {
     probe_cycles: u32,
     frames_processed: usize = 0,
     max_frames: usize,
-    latency: TimestampDiff,
+    callback: ProbeCallback,
 
-    pub fn init(opts: ProbeOptions) Probe {
+    pub fn init(callback: ProbeCallback, opts: ProbeOptions) Probe {
         return .{
             .sample_rate = opts.sample_rate,
             .hardware_buffer_size = opts.hardware_buffer_size,
             .frames_processed = 0,
             .probe_cycles = opts.probe_cycles,
             .max_frames = opts.probe_cycles * opts.hardware_buffer_size,
-            .latency = TimestampDiff{ .sec = 0, .usec = 0 },
+            .callback = callback,
         };
     }
 
@@ -40,13 +53,11 @@ pub const Probe = struct {
             return;
         };
     }
-
     pub fn addFrames(self: *Probe, frames: c_long) void {
         self.frames_processed += @intCast(frames);
 
         if (self.frames_processed >= self.max_frames) {
             self.calcLatency();
-            // self.logLatency();
             self.reset();
         }
     }
@@ -72,22 +83,21 @@ pub const Probe = struct {
         };
 
         const actual_time = start_time.diff(now);
-        self.latency = expect_time.diff(actual_time);
+
+        const latency = LatencyData{
+            .start_time = start_time,
+            .end_time = now,
+            .actual_time = actual_time,
+            .expect_time = expect_time,
+            .latency = expect_time.diff(actual_time),
+            .frames_processed = self.frames_processed,
+        };
+
+        self.callback(latency);
     }
 
     pub inline fn framesToMicros(self: Probe) i64 {
         return @intCast(@divFloor(self.frames_processed * s_to_us, self.sample_rate));
-    }
-
-    pub fn logLatency(self: Probe) void {
-        var latency_buff: [64]u8 = undefined;
-
-        const drift_str = self.latency.formatBuf(&latency_buff) catch {
-            log.warn("Failed to format difference.", .{});
-            return;
-        };
-
-        log.info("Latency in {d} frames processed: {s}", .{ self.frames_processed, drift_str });
     }
 };
 

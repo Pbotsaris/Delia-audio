@@ -1,6 +1,7 @@
 const std = @import("std");
 const alsa = @import("../alsa.zig");
 const wave = @import("../../../dsp/waves.zig");
+const latency = @import("../latency.zig");
 
 const log = std.log.scoped(.alsa);
 
@@ -8,9 +9,20 @@ const log = std.log.scoped(.alsa);
 
 // providing the format and the context in which you callback will ruin from
 // at comptime type will allow operation on device to be type safe
-const HalfDuplexDevice = alsa.driver.HalfDuplexDevice(.signed_16bits_little_endian, HalfDuplexPlaybackContext);
-const FullDuplexDevice = alsa.driver.FullDuplexDevice(.signed_16bits_little_endian, FullDuplexContext);
-const HalfDuplexCaptureDevice = alsa.driver.HalfDuplexDevice(.signed_16bits_little_endian, HalfDuplexCaptureContext);
+const HalfDuplexDevice = alsa.driver.HalfDuplexDevice(HalfDuplexPlaybackContext, .{
+    .format = .signed_16bits_little_endian,
+});
+
+const HalfDuplexCaptureDevice = alsa.driver.HalfDuplexDevice(HalfDuplexCaptureContext, .{
+    .format = .signed_16bits_little_endian,
+});
+
+//enabling latency probing at comptime
+// you mut provide a callback (see below) other will call a noop callback
+const FullDuplexDevice = alsa.driver.FullDuplexDevice(FullDuplexContext, .{
+    .format = .signed_16bits_little_endian,
+    .probe_enabled = true,
+});
 
 const HalfDuplexPlaybackContext = struct {
     const Self = @This();
@@ -126,7 +138,43 @@ pub fn halfDuplexCapture() void {
     };
 }
 
-pub fn fullDuplexCallback() void {
+fn probeCallback(data: latency.LatencyData) void {
+    var actual_time_buf: [64]u8 = undefined;
+    var expect_time_buf: [64]u8 = undefined;
+    var latency_buf: [64]u8 = undefined;
+
+    // Note that you must catch errors in this callback as it is being called in the audio loop.
+    // we don't want this kind of side effects to crash the audio loop
+    const actual_time = data.actual_time.formatBuf(&actual_time_buf) catch |err| {
+        log.warn("Failed to format actual time: {!}", .{err});
+        return;
+    };
+
+    const expect_time = data.expect_time.formatBuf(&expect_time_buf) catch |err| {
+        log.warn("Failed to format expect time: {!}", .{err});
+        return;
+    };
+
+    const lat = data.latency.formatBuf(&latency_buf) catch |err| {
+        log.warn("Failed to format latency: {!}", .{err});
+        return;
+    };
+
+    log.info(
+        \\
+        \\ Actual Time: {s}
+        \\ Expected Time: {s}
+        \\ Latency: {s}
+        \\ Frames Processed: {d}
+    , .{
+        actual_time,
+        expect_time,
+        lat,
+        data.frames_processed,
+    });
+}
+
+pub fn fullDuplexCallbackWithLatencyProbe() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
 
@@ -139,6 +187,7 @@ pub fn fullDuplexCallback() void {
         .channels = .{ .playback = .stereo, .capture = .stereo },
         // you can use different cards for playback and capture
         .ident = .{ .playback = "hw:3,0", .capture = "hw:3,0" },
+        .probe_callback = probeCallback,
     }) catch |err| {
         log.err("Failed to init device: {any}", .{err});
         return;
