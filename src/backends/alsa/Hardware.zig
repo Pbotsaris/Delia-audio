@@ -10,7 +10,7 @@ const utils = @import("../../utils/utils.zig");
 const AlsaError = @import("error.zig").AlsaError;
 const FormatType = @import("settings.zig").FormatType;
 const StreamType = @import("settings.zig").StreamType;
-const SampleRate = @import("../../audio_specs.zig").SampleRate;
+const SampleRate = @import("../../common/audio_specs.zig").SampleRate;
 const ChannelCount = @import("settings.zig").ChannelCount;
 
 pub const AudioCard = @import("AudioCard.zig");

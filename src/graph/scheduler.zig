@@ -1,6 +1,6 @@
 const std = @import("std");
 const graph = @import("graph.zig");
-const specs = @import("../audio_specs.zig");
+const specs = @import("../common/audio_specs.zig");
 const audio_buffer = @import("audio_buffer.zig");
 
 const log = std.log.scoped(.graph);

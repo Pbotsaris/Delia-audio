@@ -2,7 +2,7 @@ const std = @import("std");
 const alsa = @import("backends//backends.zig").alsa;
 const dsp = @import("dsp/dsp.zig");
 const graph = @import("graph/graph.zig");
-const specs = @import("audio_specs.zig");
+const specs = @import("common/audio_specs.zig");
 
 pub const std_options = .{
     .log_level = .debug,
@@ -12,11 +12,11 @@ pub const std_options = .{
 const log = std.log.scoped(.main);
 
 // Pick the hardware device format
-const format = alsa.device.FormatType.signed_16bits_little_endian;
+const format = alsa.driver.FormatType.signed_16bits_little_endian;
 
 // Create a device time for this given format and struct that will server as the context
 // for the callback
-const Device = alsa.device.HalfDuplexDevice(format, Example);
+const Device = alsa.driver.HalfDuplexDevice(format, Example);
 const AudioDataType = Device.AudioDataType();
 
 // get the float for the given audio format

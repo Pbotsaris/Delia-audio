@@ -10,6 +10,7 @@
 
 // TODO: Create an Alsa Allocator following the same pattern as STD for memory allocation
 const std = @import("std");
+
 const c_alsa = @cImport({
     @cInclude("asoundlib.h");
 });
@@ -19,6 +20,8 @@ const c = @cImport({
 });
 
 const log = std.log.scoped(.alsa);
+const latency = @import("latency.zig");
+const utils = @import("utils.zig");
 
 pub const Hardware = @import("Hardware.zig");
 pub const Format = @import("format.zig").Format;
@@ -33,8 +36,8 @@ pub const ChannelCount = @import("settings.zig").ChannelCount;
 pub const Mode = @import("settings.zig").Mode;
 const GenericAudioData = @import("audio_data.zig").GenericAudioData;
 
-pub const SampleRate = @import("../../audio_specs.zig").SampleRate;
-pub const BufferSize = @import("../../audio_specs.zig").BufferSize;
+pub const SampleRate = @import("../../common/audio_specs.zig").SampleRate;
+pub const BufferSize = @import("../../common/audio_specs.zig").BufferSize;
 
 const HalfDuplexDeviceOptions = struct {
     sample_rate: SampleRate = SampleRate.sr_44100,
@@ -466,6 +469,16 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 return DeviceSoftwareError.set_timestamp;
             }
 
+            var tstamp_mode: c_alsa.snd_pcm_tstamp_t = undefined;
+
+            err = c_alsa.snd_pcm_sw_params_get_tstamp_mode(self.sw_params, &tstamp_mode);
+
+            if (err >= 0) {
+                if (tstamp_mode != c_alsa.SND_PCM_TSTAMP_ENABLE) {
+                    log.warn("Timestamp was not enabled properly. Expected: {s} but found: {s}", .{ utils.tstampToStr(c_alsa.SND_PCM_TSTAMP_ENABLE), utils.tstampToStr(tstamp_mode) });
+                }
+            } else log.warn("Could not verify timestamp mode: {s}", .{c_alsa.snd_strerror(err)});
+
             err = c_alsa.snd_pcm_sw_params_set_tstamp_type(self.pcm_handle, self.sw_params, c_alsa.SND_PCM_TSTAMP_TYPE_MONOTONIC);
 
             if (err < 0) {
@@ -480,6 +493,11 @@ pub fn HalfDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
                 }
 
                 err = c_alsa.snd_pcm_sw_params(self.pcm_handle, self.sw_params);
+            } else {
+                if (c_alsa.snd_pcm_sw_params_set_period_event(self.pcm_handle, self.sw_params, 0) < 0) {
+                    log.err("Failed to disable period event: {s}", .{c_alsa.snd_strerror(err)});
+                    return DeviceSoftwareError.set_period_event;
+                }
             }
 
             if (err < 0) {
@@ -641,7 +659,6 @@ pub fn FullDuplexDevice(comptime format_type: FormatType, ContextType: type) typ
 
         pub fn start(self: Self, ctx: *ContextType, callback: AudioCallback) !void {
             var audio_loop = FullDuplexAudioLoop(format_type, ContextType).init(self, ctx, callback);
-
             try audio_loop.start();
         }
 
@@ -929,54 +946,11 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
             }
         };
 
-        const Polling = struct {
-            /// the number playback poll file descriptions (pollfds structs)
-            playback_nfd: usize = 0,
-            /// the number capture poll file descriptions (pollfds structs)
-            capture_nfd: usize = 0,
-            /// The pollfds structs for both playback and capture streams
-            pollfds: std.ArrayList(c.pollfd),
-            /// The timeout for the poll operation
-            timeout: i32,
-            /// The last time the poll operation was called
-            last_poll: u64 = 0,
-            /// The next time the poll operation should be called
-            next_poll: u64 = 0,
-
-            allocator: std.mem.Allocator,
-
-            pub fn init(allocator: std.mem.Allocator, device: HalfDevice) Polling {
-                const period_usecs: usize = @intFromFloat(@floor((@as(f64, @floatFromInt(@intFromEnum(device.buffer_size))) /
-                    @as(f64, @floatFromInt(device.sample_rate))) * 1_000_000.0));
-
-                const timeout_factor: f64 = 1.5;
-                const timeout: i32 = @intFromFloat(@as(f64, @floatFromInt(period_usecs)) * timeout_factor);
-
-                return .{
-                    .allocator = allocator,
-                    .timeout = timeout,
-                    .pollfds = std.ArrayList(c.pollfd).init(allocator),
-                };
-            }
-
-            pub fn setPollFileDescriptorsAndReserve(self: *Polling, playback_nfd: usize, capture_nfd: usize) !void {
-                self.capture_nfd = capture_nfd;
-                self.playback_nfd = playback_nfd;
-
-                try self.pollfds.ensureTotalCapacity(playback_nfd + capture_nfd);
-            }
-
-            pub fn deinit(self: *Polling) void {
-                self.pollfds.deinit();
-            }
-        };
-
         device: Device,
         running: bool = false,
         callback: AudioCallback(),
         ctx: *ContextType,
         allocator: std.mem.Allocator,
-        polling: Polling,
         stopped: bool = false,
         zero_transfers: ZeroTransfers = ZeroTransfers{},
         maybe_playback_areas: ?*c_alsa.snd_pcm_channel_area_t = null,
@@ -989,19 +963,10 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
                 .callback = callback,
                 // loop is always connected to a master device and uses the master device's allocator
                 .allocator = device.allocator,
-                // calculate timeout based on playback and capture and playback must have the same sample rate and buffer size
-                .polling = Polling.init(device.allocator, device.playback_device),
             };
         }
 
-        pub fn deinit(self: *Self) !void {
-            self.polling.deinit();
-        }
-
-        pub fn start(self: *Self) AudioLoopError!void {
-            try self.preparePoll();
-            errdefer self.polling.deinit();
-
+        pub fn start(self: *Self) !void {
             self.running = true;
 
             switch (self.device.capture_device.access_type) {
@@ -1013,22 +978,16 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
             }
         }
 
-        fn preparePoll(self: *Self) !void {
-            const pnfd = c_alsa.snd_pcm_poll_descriptors_count(self.device.playback_device.pcm_handle);
-            const cnfd = c_alsa.snd_pcm_poll_descriptors_count(self.device.capture_device.pcm_handle);
-
-            self.polling.setPollFileDescriptorsAndReserve(@intCast(pnfd), @intCast(cnfd)) catch {
-                log.err("Failed to allocate poll descriptors.", .{});
-                return AudioLoopError.poll_alloc;
-            };
-        }
-
         fn linkedDirectWrite(self: *Self) !void {
+            //           const samples_rate = self.device.playback_device.sample_rate;
+            //         const hardware_buffer_size = self.device.playback_device.hardware_buffer_size;
+
             const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
+
             self.stopped = true;
 
+            try self.checkState(.playback);
             while (self.running) {
-                try self.checkState(.playback);
                 try self.checkState(.capture);
 
                 const skip = try self.checkLinkedAvailability(buffer_size);
@@ -1065,7 +1024,6 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
                     );
 
                     self.callback(self.ctx, &capture_data, &playback_data);
-
                     const playback_frames_transferred = try self.commit(playback_offset, playback_expected_transfer, .playback);
 
                     // we don't care about the capture frames transferred for snd_pcm_link devices
@@ -1159,7 +1117,7 @@ fn FullDuplexAudioLoop(comptime format_type: FormatType, ContextType: type) type
 
             const frames_actually_transfered = c_alsa.snd_pcm_mmap_commit(pcm_handle, offset, expected_to_transfer);
 
-            log.debug("Stream {s}: transferred {d} frames", .{ @tagName(stream_type), frames_actually_transfered });
+            //    log.debug("Stream {s}: transferred {d} frames", .{ @tagName(stream_type), frames_actually_transfered });
 
             if (frames_actually_transfered < 0) {
                 try self.xrunRecovery(@intCast(frames_actually_transfered), .playback);
@@ -1265,20 +1223,5 @@ fn AlignmentVerifier(format_type: FormatType, ContextType: type) type {
                 return AudioLoopError.audio_buffer_nonalignment;
             }
         }
-    };
-}
-
-fn stateToStr(state: c_uint) []const u8 {
-    return switch (state) {
-        c_alsa.SND_PCM_STATE_OPEN => "OPEN",
-        c_alsa.SND_PCM_STATE_SETUP => "SETUP",
-        c_alsa.SND_PCM_STATE_PREPARED => "PREPARED",
-        c_alsa.SND_PCM_STATE_RUNNING => "RUNNING",
-        c_alsa.SND_PCM_STATE_XRUN => "XRUN",
-        c_alsa.SND_PCM_STATE_DRAINING => "DRAINING",
-        c_alsa.SND_PCM_STATE_PAUSED => "PAUSED",
-        c_alsa.SND_PCM_STATE_SUSPENDED => "SUSPENDED",
-        c_alsa.SND_PCM_STATE_DISCONNECTED => "DISCONNECTED",
-        else => "UNKNOWN",
     };
 }

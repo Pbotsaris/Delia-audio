@@ -1,7 +1,7 @@
 const std = @import("std");
 const dsp = @import("dsp/dsp.zig");
 const graph = @import("graph/graph.zig");
-const audio_specs = @import("audio_specs.zig");
+const audio_specs = @import("common/audio_specs.zig");
 const ex = @import("examples.zig");
 
 const backends = @import("backends/backends.zig");

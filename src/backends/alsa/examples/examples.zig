@@ -8,9 +8,9 @@ const log = std.log.scoped(.alsa);
 
 // providing the format and the context in which you callback will ruin from
 // at comptime type will allow operation on device to be type safe
-const HalfDuplexDevice = alsa.device.HalfDuplexDevice(.signed_16bits_little_endian, HalfDuplexPlaybackContext);
-const FullDuplexDevice = alsa.device.FullDuplexDevice(.signed_16bits_little_endian, FullDuplexContext);
-const HalfDuplexCaptureDevice = alsa.device.HalfDuplexDevice(.signed_16bits_little_endian, HalfDuplexCaptureContext);
+const HalfDuplexDevice = alsa.driver.HalfDuplexDevice(.signed_16bits_little_endian, HalfDuplexPlaybackContext);
+const FullDuplexDevice = alsa.driver.FullDuplexDevice(.signed_16bits_little_endian, FullDuplexContext);
+const HalfDuplexCaptureDevice = alsa.driver.HalfDuplexDevice(.signed_16bits_little_endian, HalfDuplexCaptureContext);
 
 const HalfDuplexPlaybackContext = struct {
     const Self = @This();
@@ -47,11 +47,11 @@ const FullDuplexContext = struct {
 
     const AudioDataType = FullDuplexDevice.AudioDataType();
 
-    pub fn callback(self: *Self, in: AudioDataType, out: AudioDataType) void {
+    pub fn callback(self: *Self, in: AudioDataType, _: AudioDataType) void {
         self.w.setSampleRate(@floatFromInt(in.sample_rate));
 
-        std.debug.print("in samples: {d} out samples: {d}\n", .{ in.totalSampleCount(), out.totalSampleCount() });
-        std.debug.print("in channels: {d} out channels: {d}\n", .{ in.channels, out.channels });
+        //    std.debug.print("in samples: {d} out samples: {d}\n", .{ in.totalSampleCount(), out.totalSampleCount() });
+        //   std.debug.print("in channels: {d} out channels: {d}\n", .{ in.channels, out.channels });
     }
 };
 

@@ -5,10 +5,11 @@ const c_alsa = @cImport({
 });
 
 const settings = @import("settings.zig");
-const FormatType = @import("settings.zig").FormatType;
-const StreamType = @import("settings.zig").StreamType;
-const SampleRate = @import("../../audio_specs.zig").SampleRate;
-const Channels = @import("settings.zig").ChannelCount;
+const FormatType = settings.FormatType;
+const StreamType = settings.StreamType;
+const Channels = settings.ChannelCount;
+
+const SampleRate = @import("../../common/audio_specs.zig").SampleRate;
 
 const log = std.log.scoped(.alsa);
 const SupportedSettings = @This();
