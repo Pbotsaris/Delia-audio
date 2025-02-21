@@ -138,39 +138,65 @@ pub fn halfDuplexCapture() void {
     };
 }
 
+// create a callback to probe the latency of the device
+// the data argument will hold the latency information
 fn probeCallback(data: latency.LatencyData) void {
     var actual_time_buf: [64]u8 = undefined;
     var expect_time_buf: [64]u8 = undefined;
     var latency_buf: [64]u8 = undefined;
 
-    // Note that you must catch errors in this callback as it is being called in the audio loop.
-    // we don't want this kind of side effects to crash the audio loop
+    var start_time_buf: [64]u8 = undefined;
+    var end_time_buf: [64]u8 = undefined;
+
+    // the time it tooks to process the frames
     const actual_time = data.actual_time.formatBuf(&actual_time_buf) catch |err| {
+        // Note that you must catch errors in this callback as it is being called in the audio loop.
+        // we don't want this kind of side effects to crash the audio loop
         log.warn("Failed to format actual time: {!}", .{err});
         return;
     };
 
+    // the time it should have taken to process the frames
     const expect_time = data.expect_time.formatBuf(&expect_time_buf) catch |err| {
         log.warn("Failed to format expect time: {!}", .{err});
         return;
     };
 
+    // the difference between the actual and expected time, or the latency
     const lat = data.latency.formatBuf(&latency_buf) catch |err| {
         log.warn("Failed to format latency: {!}", .{err});
         return;
     };
 
+    // the time the probe started
+    const start_time = data.start_time.formatBuf(&start_time_buf) catch |err| {
+        log.warn("Failed to format start time: {!}", .{err});
+        return;
+    };
+
+    // the time the probe ended
+    const end_time = data.end_time.formatBuf(&end_time_buf) catch |err| {
+        log.warn("Failed to format end time: {!}", .{err});
+        return;
+    };
+
     log.info(
         \\
+        \\ Start Time: {s}
+        \\ End Time: {s}
         \\ Actual Time: {s}
         \\ Expected Time: {s}
         \\ Latency: {s}
-        \\ Frames Processed: {d}
+        \\ Frames Processed: {d} frames
+        \\ Buffers Processed: {d} 
     , .{
+        start_time,
+        end_time,
         actual_time,
         expect_time,
         lat,
         data.frames_processed,
+        data.cycles,
     });
 }
 
@@ -187,18 +213,22 @@ pub fn fullDuplexCallbackWithLatencyProbe() void {
         .channels = .{ .playback = .stereo, .capture = .stereo },
         // you can use different cards for playback and capture
         .ident = .{ .playback = "hw:3,0", .capture = "hw:3,0" },
-        .probe_callback = probeCallback,
+        .probe_options = .{
+            .callback = probeCallback,
+            // the number buffer_size * n_periods to process before calculating the latency
+            .buffer_cycles = 10,
+        },
     }) catch |err| {
-        log.err("Failed to init device: {any}", .{err});
+        log.err("Failed to init device: {!}", .{err});
         return;
     };
 
     defer dev.deinit() catch |err| {
-        log.err("Failed to deinit device: {any}", .{err});
+        log.err("Failed to deinit device: {!}", .{err});
     };
 
     dev.prepare(.min_available) catch |err| {
-        log.err("Failed to prepare device: {any}", .{err});
+        log.err("Failed to prepare device: {!}", .{err});
     };
 
     var ctx = FullDuplexContext{};

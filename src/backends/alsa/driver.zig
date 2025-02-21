@@ -39,6 +39,11 @@ const GenericAudioData = @import("audio_data.zig").GenericAudioData;
 pub const SampleRate = @import("../../common/audio_specs.zig").SampleRate;
 pub const BufferSize = @import("../../common/audio_specs.zig").BufferSize;
 
+const ProbeOptions = struct {
+    callback: latency.ProbeCallback,
+    buffer_cycles: u32,
+};
+
 const HalfDuplexDeviceOptions = struct {
     sample_rate: SampleRate = SampleRate.sr_44100,
     channels: ChannelCount = ChannelCount.stereo,
@@ -50,7 +55,7 @@ const HalfDuplexDeviceOptions = struct {
     n_periods: u32 = 5,
     start_thresh: StartThreshold = .fill_one_period,
     must_prepare: bool = true,
-    probe_callback: ?latency.ProbeCallback = null,
+    probe_options: ?ProbeOptions = null,
     // not exposed to the caller for now
     // access_type: AccessType = AccessType.mmap_interleaved,
     // mode: Mode = Mode.none,
@@ -374,11 +379,11 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
             var probe: ?latency.Probe = null;
 
             if (PROBE_ENABLED) {
-                if (opts.probe_callback) |cb| {
-                    probe = latency.Probe.init(cb, .{
+                if (opts.probe_options) |options| {
+                    probe = latency.Probe.init(options.callback, .{
                         .sample_rate = sample_rate,
                         .hardware_buffer_size = @intCast(hardware_buffer_size),
-                        .probe_cycles = 10,
+                        .buffer_cycles = options.buffer_cycles,
                     });
                 } else log.warn("Probe is enabled but no callback was provided. Will call noop callback.", .{});
             }
@@ -597,7 +602,7 @@ const FullDuplexDeviceOptions = struct {
     n_periods: u32 = 5,
     start_thresh: StartThreshold = .fill_one_period,
     master_device: StreamType = StreamType.playback,
-    probe_callback: ?latency.ProbeCallback = null,
+    probe_options: ?ProbeOptions = null,
 };
 
 pub fn FullDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptimeOptions) type {
@@ -634,6 +639,7 @@ pub fn FullDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
 
             const is_linked = std.mem.eql(u8, opts.ident.playback, opts.ident.capture);
 
+            // note that slave and master is only relevant when the devices are linked
             const capture_device = try Device.init(allocator, .{
                 .sample_rate = opts.sample_rate,
                 .channels = opts.channels.capture,
@@ -642,12 +648,13 @@ pub fn FullDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                 .buffer_size = opts.buffer_size,
                 .timeout = opts.timeout,
                 .n_periods = opts.n_periods,
-                // we don't want to snd_pcm_prepare the slave device when linked linked
                 .start_thresh = opts.start_thresh,
-                .probe_callback = opts.probe_callback,
+                .probe_options = opts.probe_options,
+
+                // we don't need to snd_pcm_prepare the slave device when linked linked
+                .must_prepare = !is_linked,
             });
 
-            // note that slave and master is only relevant when the devices are linked
             const playback_device = try Device.init(allocator, .{
                 .sample_rate = opts.sample_rate,
                 .channels = opts.channels.playback,
@@ -657,8 +664,8 @@ pub fn FullDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                 .timeout = opts.timeout,
                 .n_periods = opts.n_periods,
                 .start_thresh = opts.start_thresh,
-                .must_prepare = !is_linked,
-                .probe_callback = opts.probe_callback,
+
+                .probe_options = opts.probe_options,
             });
 
             if (is_linked) {
@@ -1014,9 +1021,10 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
         fn linkedDirectWrite(self: *Self) !void {
             const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
             self.stopped = true;
-
             // comptime check
+
             if (Device.PROBE_ENABLED) {
+                // full duplex uses de master device to probe
                 if (self.device.playback_device.probe) |*p| p.start();
             }
 
