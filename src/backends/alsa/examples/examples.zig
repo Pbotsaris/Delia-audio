@@ -363,15 +363,14 @@ pub fn usingHardwareToInitDevice() void {
     //
     //  std.debug.print("{s}", .{hardware});
     //
-    //  For every card and port there is a hint on how to select an specific card or port. We will use those.
+    //  For every card and port there is a hint on how to select an specific card or port. You can use those instead selecting by name
     //     ├──  Select Methods:
     //     │    │  hardware.selectPortAt(.playback, 0)
     //     │    │  card.selectPlaybackAt(0)
     //     │    └──
     //
 
-    // select the audio card and port you want to use
-
+    // select the audio card and port
     // by index
     // hardware.selectAudioCardAt(3) catch |err| {
     //     log.err("Failed to select audio card: {}", .{err});
@@ -419,7 +418,7 @@ pub fn usingHardwareToInitDevice() void {
     // now you can initialize the device knowing that your settings are supported
     //  The hardware object will provide the basic info to initialize the device
     //  but it is possible to configure the device with more options.
-    //  Below an example of setting the buffer size and access type
+    //  Below an example of setting the buffer size
     var device = HalfDuplexDevice.fromHardware(allocator, hardware, .{ .buffer_size = .buf_1024 }) catch |err| {
         log.err("Failed to init device: {}", .{err});
         return;

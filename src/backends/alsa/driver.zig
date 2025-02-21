@@ -743,7 +743,7 @@ fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptime
         callback: AudioCallback(),
         ctx: *ContextType,
 
-        pub fn init(device: HalfDuplexDevice(format_type, ContextType), ctx: *ContextType, callback: AudioCallback()) Self {
+        pub fn init(device: HalfDuplexDevice(ContextType, comptime_opts), ctx: *ContextType, callback: AudioCallback()) Self {
             return .{
                 .device = device,
                 .callback = callback,
@@ -826,9 +826,7 @@ fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptime
                     }
                 }
 
-                // Start Transfer
-
-                // in number of frames
+                // in frames
                 var to_transfer = buffer_size;
                 var offset: c_ulong = 0;
 
@@ -845,7 +843,8 @@ fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptime
                     const areas = maybe_areas orelse return AudioLoopError.unexpected;
                     const addr = areas.addr orelse return AudioLoopError.unexpected;
 
-                    try self.verifyAlignment(areas);
+                    const verifier = AlignmentVerifier(ContextType, comptime_opts){};
+                    try verifier.verifyAlignment(self.device, areas);
 
                     const step: c_ulong = @divFloor(areas.step, 8);
                     const buf_start: c_ulong = (@divFloor(areas.first, 8)) + (offset * step);
@@ -934,32 +933,6 @@ fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptime
                 return AudioLoopError.xrun;
             }
         }
-
-        inline fn verifyAlignment(self: Self, area: *c_alsa.snd_pcm_channel_area_t) !void {
-            if (area.first % BYTE_ALIGN != 0) {
-                log.err("Area.first not byte(8) aligned. area.first == {d}", .{area.first});
-                return AudioLoopError.audio_buffer_nonalignment;
-            }
-
-            const bit_depth: c_uint = @intCast(self.device.audio_format.bit_depth);
-
-            if (area.step % bit_depth != 0) {
-                log.err("Area.step is non-aligned with audio_format.bit_depth. area.step == {d} bits && audio_format.bit_depth == {d} bits", .{ area.step, bit_depth });
-                return AudioLoopError.audio_buffer_nonalignment;
-            }
-
-            const n_channels: c_uint = @intCast(self.device.channels);
-
-            if (area.step != (n_channels * bit_depth)) {
-                log.err("Area.step is not equal to audio_format.bit_depth * Device.n_channels. area.step == {d} bits && audio_format.bit_depth({d}) * Device.n_channels({d})  == {d} bits", .{
-                    area.step,
-                    bit_depth,
-                    n_channels,
-                    bit_depth * n_channels,
-                });
-                return AudioLoopError.audio_buffer_nonalignment;
-            }
-        }
     };
 }
 
@@ -1001,7 +974,6 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
         running: bool = false,
         callback: AudioCallback(),
         ctx: *ContextType,
-        allocator: std.mem.Allocator,
         stopped: bool = false,
         zero_transfers: ZeroTransfers = ZeroTransfers{},
         maybe_playback_areas: ?*c_alsa.snd_pcm_channel_area_t = null,
@@ -1012,8 +984,6 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
                 .device = device,
                 .ctx = ctx,
                 .callback = callback,
-                // loop is always connected to a master device and uses the master device's allocator
-                .allocator = device.allocator,
             };
         }
 
@@ -1173,8 +1143,6 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
             const pcm_handle = if (stream_type == .capture) self.device.capture_device.pcm_handle else self.device.playback_device.pcm_handle;
 
             const frames_actually_transfered = c_alsa.snd_pcm_mmap_commit(pcm_handle, offset, expected_to_transfer);
-
-            //    log.debug("Stream {s}: transferred {d} frames", .{ @tagName(stream_type), frames_actually_transfered });
 
             if (frames_actually_transfered < 0) {
                 try self.xrunRecovery(@intCast(frames_actually_transfered), .playback);
