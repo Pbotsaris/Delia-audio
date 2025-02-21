@@ -736,6 +736,8 @@ fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptime
             return *const fn (ctx: *ContextType, data: *GenericAudioData(format_type)) void;
         }
 
+        const Device = HalfDuplexDevice(ContextType, comptime_opts);
+
         device: HalfDuplexDevice(ContextType, comptime_opts),
         running: bool = false,
         callback: AudioCallback(),
@@ -770,6 +772,10 @@ fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptime
             var maybe_areas: ?*c_alsa.snd_pcm_channel_area_t = null;
             var stopped: bool = true;
             var zero_transfers: usize = 0;
+
+            if (Device.PROBE_ENABLED) {
+                if (self.device.probe) |*p| p.start();
+            }
 
             while (self.running) {
                 const state: c_uint = c_alsa.snd_pcm_state(self.device.pcm_handle);
@@ -871,6 +877,11 @@ fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptime
                         log.err("Too many consecutive zero transfers. Stopping device.", .{});
                         stopped = true;
                         return AudioLoopError.xrun;
+                    }
+
+                    // comptime conditional evaluation
+                    if (Device.PROBE_ENABLED) {
+                        if (self.device.probe) |*p| p.addFrames(@intCast(frames_actually_transfered));
                     }
 
                     to_transfer -= @as(c_ulong, @intCast(frames_actually_transfered));
