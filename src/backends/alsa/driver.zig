@@ -676,7 +676,7 @@ pub fn FullDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                     log.err("Failed to link playback and capture devices: {s}", .{c_alsa.snd_strerror(err)});
                     return DeviceHardwareError.linking_devices;
                 }
-            }
+            } else log.debug("FullDuplex with unlinked playback and capture devices.", .{});
 
             return .{
                 .playback_device = playback_device,
@@ -792,7 +792,7 @@ fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptime
 
                     else => {
                         if (state < 0) {
-                            log.debug("Unexpected state error: {s}", .{c_alsa.snd_strerror(state)});
+                            log.err("Unexpected state error: {s}", .{c_alsa.snd_strerror(state)});
                             return AudioLoopError.unexpected;
                         }
                     },
@@ -949,6 +949,11 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
         const Device = FullDuplexDevice(ContextType, comptime_opts);
         const HalfDevice = HalfDuplexDevice(ContextType, comptime_opts);
 
+        const AvailStatus = enum {
+            skip,
+            do_nothing,
+        };
+
         const ZeroTransfers = struct {
             playback: usize = 0,
             capture: usize = 0,
@@ -974,7 +979,8 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
         running: bool = false,
         callback: AudioCallback(),
         ctx: *ContextType,
-        stopped: bool = false,
+        playback_stopped: bool = false,
+        capture_stopped: bool = false,
         zero_transfers: ZeroTransfers = ZeroTransfers{},
         maybe_playback_areas: ?*c_alsa.snd_pcm_channel_area_t = null,
         maybe_capture_areas: ?*c_alsa.snd_pcm_channel_area_t = null,
@@ -991,7 +997,9 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
             self.running = true;
 
             switch (self.device.capture_device.access_type) {
-                AccessType.mmap_interleaved => try self.linkedDirectWrite(),
+                AccessType.mmap_interleaved => {
+                    if (self.device.is_linked) try self.linkedDirectWrite() else try self.directWrite();
+                },
                 else => {
                     log.err("Unsupported access type: {s}", .{@tagName(self.device.capture_device.access_type)});
                     return AudioLoopError.unsupported;
@@ -999,9 +1007,76 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
             }
         }
 
+        fn directWrite(self: *Self) !void {
+            // capture and playback buffer size should be the same
+            const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
+            const capture_buffer_size: c_ulong = @intFromEnum(self.device.capture_device.buffer_size);
+
+            log.debug("capture buffer size: {d}, playback buffer size: {d}", .{ capture_buffer_size, buffer_size });
+            log.debug("capture hardware buffer size: {d}, playback hardware buffer size: {d}", .{ self.device.capture_device.hardware_buffer_size, self.device.playback_device.hardware_buffer_size });
+
+            if (Device.PROBE_ENABLED) {
+                if (self.device.playback_device.probe) |*p| p.start();
+            }
+
+            while (self.running) {
+                try self.checkState(.playback);
+                try self.checkState(.capture);
+
+                const status = try self.checkUnlinkedAvailability(buffer_size);
+
+                if (status == .skip) continue;
+
+                var to_transfer: c_ulong = buffer_size;
+                var playback_offset: c_ulong = 0;
+                var capture_offset: c_ulong = 0;
+
+                while (to_transfer > 0) {
+                    var playback_expected_transfer = to_transfer;
+                    var capture_expected_transfer = to_transfer;
+
+                    const playback_buffer = try self.begin(&playback_offset, &playback_expected_transfer, .playback);
+                    const capture_buffer = try self.begin(&capture_offset, &capture_expected_transfer, .capture);
+
+                    var capture_data =
+                        GenericAudioData(format_type)
+                        .init(
+                        capture_buffer,
+                        self.device.capture_device.channels,
+                        self.device.capture_device.sample_rate,
+                        self.device.capture_device.audio_format,
+                    );
+
+                    var playback_data =
+                        GenericAudioData(format_type)
+                        .init(
+                        playback_buffer,
+                        self.device.playback_device.channels,
+                        self.device.playback_device.sample_rate,
+                        self.device.playback_device.audio_format,
+                    );
+
+                    self.callback(self.ctx, &capture_data, &playback_data);
+
+                    const capture_transferred = try self.commit(capture_offset, capture_expected_transfer, .capture);
+                    const playback_transferred = try self.commit(playback_offset, playback_expected_transfer, .playback);
+
+                    const frames_transferred = @min(capture_transferred, playback_transferred);
+
+                    if (Device.PROBE_ENABLED) {
+                        if (self.device.playback_device.probe) |*p| p.addFrames(frames_transferred);
+                    }
+
+                    log.debug("Transferred {d} frames", .{frames_transferred});
+
+                    to_transfer -= @as(c_ulong, @intCast(frames_transferred));
+                }
+            }
+        }
+
         fn linkedDirectWrite(self: *Self) !void {
             const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
-            self.stopped = true;
+            self.playback_stopped = true;
             // comptime check
 
             if (Device.PROBE_ENABLED) {
@@ -1013,8 +1088,9 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
                 try self.checkState(.playback);
                 try self.checkState(.capture);
 
-                const skip = try self.checkLinkedAvailability(buffer_size);
-                if (skip) continue;
+                // will skip until we have available in master device
+                const status = try self.checkLinkedAvailability(buffer_size);
+                if (status == .skip) continue;
 
                 // in frames
                 var to_transfer = buffer_size;
@@ -1075,22 +1151,69 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
 
                 else => {
                     if (state < 0) {
-                        log.debug("Unexpected state error: {s}", .{c_alsa.snd_strerror(state)});
+                        log.err("Unexpected state error: {s}", .{c_alsa.snd_strerror(state)});
                         return AudioLoopError.unexpected;
                     }
                 },
             }
         }
 
-        inline fn checkLinkedAvailability(self: *Self, buffer_size: c_ulong) !bool {
-            const avail = c_alsa.snd_pcm_avail_update(self.device.playback_device.pcm_handle);
+        inline fn checkUnlinkedAvailability(self: *Self, buffer_size: c_ulong) !AvailStatus {
+            const capture_avail = c_alsa.snd_pcm_avail_update(self.device.capture_device.pcm_handle);
 
-            if (avail < 0) {
-                try self.xrunRecovery(@intCast(avail), .playback);
-                return true;
+            if (capture_avail < 0) {
+                try self.xrunRecovery(@intCast(capture_avail), .capture);
+                self.capture_stopped = true;
+                return .skip;
             }
 
-            if (avail < buffer_size and self.stopped) {
+            if (capture_avail < buffer_size and self.capture_stopped) {
+                const err = c_alsa.snd_pcm_start(self.device.capture_device.pcm_handle);
+
+                if (err < 0) {
+                    log.err("Failed to start capture pcm: {s}", .{c_alsa.snd_strerror(err)});
+                    return AudioLoopError.start;
+                }
+
+                self.capture_stopped = false;
+                return .skip;
+            }
+
+            if (capture_avail < buffer_size and !self.capture_stopped) {
+                // and start it, since it won't have any frames available until started.
+                // Note: In linked mode, capture (slave) device starts automatically with playback (master).
+                // In unlinked mode, we need to explicitly check if capture is still in PREPARED state
+                // and start it, since it won't have any frames available until started.
+                const state = c_alsa.snd_pcm_state(self.device.capture_device.pcm_handle);
+
+                if (state == c_alsa.SND_PCM_STATE_PREPARED) {
+                    const err = c_alsa.snd_pcm_start(self.device.capture_device.pcm_handle);
+
+                    if (err < 0) {
+                        log.err("Failed to start capture pcm: {s}", .{c_alsa.snd_strerror(err)});
+                        return AudioLoopError.start;
+                    }
+                }
+
+                const err = c_alsa.snd_pcm_wait(self.device.capture_device.pcm_handle, self.device.capture_device.timeout);
+
+                if (err < 0) {
+                    try self.xrunRecovery(err, .capture);
+                    self.capture_stopped = true;
+                    // continue
+                    return .skip;
+                }
+            }
+
+            const playback_avail = c_alsa.snd_pcm_avail_update(self.device.playback_device.pcm_handle);
+
+            if (playback_avail < 0) {
+                try self.xrunRecovery(@intCast(playback_avail), .playback);
+                self.playback_stopped = true;
+                return .skip;
+            }
+
+            if (playback_avail < buffer_size and self.playback_stopped) {
                 const err = c_alsa.snd_pcm_start(self.device.playback_device.pcm_handle);
 
                 if (err < 0) {
@@ -1098,21 +1221,73 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
                     return AudioLoopError.start;
                 }
 
-                self.stopped = false;
-                return true;
+                self.playback_stopped = false;
+                return .skip;
             }
 
-            if (avail < buffer_size and !self.stopped) {
+            if (playback_avail < buffer_size and !self.playback_stopped) {
+                // Note: In unlinked mode, both capture and playback need explicit state management.
+                // Even though playback isn't a slave device, it can still be in PREPARED state
+                // and will need explicit starting when sufficient buffer space is available.
+                // Without this check, the device can get stuck waiting after the first hardware buffer cycle.
+                const state = c_alsa.snd_pcm_state(self.device.playback_device.pcm_handle);
+
+                if (state == c_alsa.SND_PCM_STATE_PREPARED) {
+                    const err = c_alsa.snd_pcm_start(self.device.playback_device.pcm_handle);
+
+                    if (err < 0) {
+                        log.err("Failed to start capture pcm: {s}", .{c_alsa.snd_strerror(err)});
+                        return AudioLoopError.start;
+                    }
+                }
+
                 const err = c_alsa.snd_pcm_wait(self.device.playback_device.pcm_handle, self.device.playback_device.timeout);
 
                 if (err < 0) {
                     try self.xrunRecovery(err, .playback);
-                    self.stopped = true;
-                    return true;
+                    self.playback_stopped = true;
+                    return .skip;
                 }
             }
 
-            return false;
+            const avail = @min(capture_avail, if (playback_avail > 0) playback_avail else capture_avail);
+
+            if (avail < buffer_size) return .skip;
+
+            return .do_nothing;
+        }
+
+        inline fn checkLinkedAvailability(self: *Self, buffer_size: c_ulong) !AvailStatus {
+            const avail = c_alsa.snd_pcm_avail_update(self.device.playback_device.pcm_handle);
+
+            if (avail < 0) {
+                try self.xrunRecovery(@intCast(avail), .playback);
+                return .skip;
+            }
+
+            if (avail < buffer_size and self.playback_stopped) {
+                const err = c_alsa.snd_pcm_start(self.device.playback_device.pcm_handle);
+
+                if (err < 0) {
+                    log.err("Failed to start playback pcm: {s}", .{c_alsa.snd_strerror(err)});
+                    return AudioLoopError.start;
+                }
+
+                self.playback_stopped = false;
+                return .skip;
+            }
+
+            if (avail < buffer_size and !self.playback_stopped) {
+                const err = c_alsa.snd_pcm_wait(self.device.playback_device.pcm_handle, self.device.playback_device.timeout);
+
+                if (err < 0) {
+                    try self.xrunRecovery(err, .playback);
+                    self.playback_stopped = true;
+                    return .skip;
+                }
+            }
+
+            return .do_nothing;
         }
 
         fn begin(self: *Self, offset: *c_alsa.snd_pcm_uframes_t, expected_to_transfer: *c_alsa.snd_pcm_uframes_t, stream_type: StreamType) ![]u8 {
@@ -1123,7 +1298,7 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
 
             if (res < 0) {
                 try self.xrunRecovery(res, stream_type);
-                self.stopped = true;
+                self.playback_stopped = true;
             }
 
             const areas = maybe_areas orelse return AudioLoopError.unexpected;
@@ -1151,7 +1326,8 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
             if (frames_actually_transfered == 0) {
                 const state = c_alsa.snd_pcm_state(pcm_handle);
 
-                // when snd_pcm_link, capture (which is the slave) will yield zero transfers, so we skip the check
+                // In linked mode, capture (slave) will yield zero transfers while in PREPARED state, which is normal
+                // For unlinked mode, capture is explicitly started in checkUnlinkedAvailability() when in PREPARED state,
                 if (!(self.device.is_linked and stream_type == .capture and state == c_alsa.SND_PCM_STATE_PREPARED)) {
                     self.zero_transfers.increment(stream_type);
                 }
@@ -1163,7 +1339,7 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
                     self.zero_transfers.get(.capture),
                 });
 
-                self.stopped = true;
+                self.playback_stopped = true;
                 return AudioLoopError.xrun;
             }
 

@@ -19,9 +19,13 @@ const HalfDuplexCaptureDevice = alsa.driver.HalfDuplexDevice(HalfDuplexCaptureCo
 
 //enabling latency probing at comptime
 // you mut provide a callback (see below) other will call a noop callback
-const FullDuplexDevice = alsa.driver.FullDuplexDevice(FullDuplexContext, .{
+const FullDuplexDeviceWithProbe = alsa.driver.FullDuplexDevice(FullDuplexContext, .{
     .format = .signed_16bits_little_endian,
     .probe_enabled = true,
+});
+
+const FullDuplexDevice = alsa.driver.FullDuplexDevice(FullDuplexContext, .{
+    .format = .signed_16bits_little_endian,
 });
 
 const HalfDuplexPlaybackContext = struct {
@@ -57,7 +61,7 @@ const FullDuplexContext = struct {
 
     w: wave.Wave(f32) = wave.Wave(f32).init(100.0, 0.2, 48000.0),
 
-    const AudioDataType = FullDuplexDevice.AudioDataType();
+    const AudioDataType = FullDuplexDeviceWithProbe.AudioDataType();
 
     pub fn callback(self: *Self, in: AudioDataType, out: AudioDataType) void {
         self.w.setSampleRate(@floatFromInt(in.sample_rate));
@@ -206,7 +210,7 @@ pub fn fullDuplexCallbackWithLatencyProbe() void {
 
     const allocator = gpa.allocator();
 
-    var dev = FullDuplexDevice.init(allocator, .{
+    var dev = FullDuplexDeviceWithProbe.init(allocator, .{
         .sample_rate = .sr_44100,
         .buffer_size = .buf_512,
         // you can have different channel configurations for playback and capture
@@ -235,6 +239,76 @@ pub fn fullDuplexCallbackWithLatencyProbe() void {
 
     dev.start(&ctx, @field(FullDuplexContext, "callback")) catch |err| {
         log.err("Failed to start device: {any}", .{err});
+    };
+}
+
+// Start devices with different cards for playback and capture
+// sync is managed manually by the driver as oppose to relying on the alsa
+//  Note that devices must be operating in the same sample rate, format and buffer size
+//  otherwise the driver will fail to start the devices
+pub fn fullDuplexCallbackUnlinkedDevices() void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) std.debug.print("Failed to deinit allocator.", .{});
+
+    const allocator = gpa.allocator();
+
+    var hardware = alsa.Hardware.init(allocator) catch |err| {
+        log.err("Failed to initialize hardware: {!}", .{err});
+        return;
+    };
+
+    defer hardware.deinit();
+
+    // looking for my webcam card that contains capture
+    const maybe_audio_card = hardware.findCardBy(.name, "Webcam");
+
+    const audio_card: alsa.Hardware.AudioCard = maybe_audio_card orelse {
+        log.err("Failed to find audio card", .{});
+        return;
+    };
+
+    const capture = audio_card.getCaptureAt(0) catch |err| {
+        log.err("Failed to get capture port: {!}", .{err});
+        return;
+    };
+
+    std.debug.print("Capturing with: {s}", .{capture});
+
+    const samples_rate = capture.selected_settings.sample_rate orelse {
+        log.err("Failed to get capture sample rate", .{});
+        return;
+    };
+
+    const channels = capture.selected_settings.channels orelse {
+        log.err("Failed to get capture channels", .{});
+        return;
+    };
+
+    // note: if playback does not support the capture sample rate, driver will fail to start
+    var dev = FullDuplexDevice.init(allocator, .{
+        .sample_rate = samples_rate,
+        .channels = .{ .playback = .stereo, .capture = channels },
+        .ident = .{ .playback = "hw:3,0", .capture = capture.identifier },
+    }) catch |err| {
+        log.err("Failed to init device: {!}", .{err});
+        return;
+    };
+
+    defer {
+        dev.deinit() catch |err| {
+            log.err("Failed to deinit device: {!}", .{err});
+        };
+    }
+
+    dev.prepare(.min_available) catch |err| {
+        log.err("Failed to prepare device: {!}", .{err});
+        return;
+    };
+
+    var ctx = FullDuplexContext{};
+
+    dev.start(&ctx, @field(FullDuplexContext, "callback")) catch |err| {
+        log.err("Failed to start device: {!}", .{err});
     };
 }
 
