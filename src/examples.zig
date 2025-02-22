@@ -60,7 +60,7 @@ pub const Example = struct {
             .access_pattern = .interleaved,
         });
 
-        try self.device.prepare(.min_available);
+        try self.device.prepare();
     }
 
     pub fn callback(ctx: *Self, data: AudioDataType) void {

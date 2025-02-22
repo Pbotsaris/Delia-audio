@@ -99,7 +99,7 @@ pub fn playbackSineWave() void {
         log.err("Failed to deinit device: {}", .{err});
     };
 
-    dev.prepare(.min_available) catch |err| {
+    dev.prepare() catch |err| {
         log.err("Failed to prepare device: {}", .{err});
     };
 
@@ -131,7 +131,7 @@ pub fn halfDuplexCapture() void {
         log.err("Failed to deinit device: {}", .{err});
     };
 
-    dev.prepare(.min_available) catch |err| {
+    dev.prepare() catch |err| {
         log.err("Failed to prepare device: {}", .{err});
     };
 
@@ -231,7 +231,7 @@ pub fn fullDuplexCallbackWithLatencyProbe() void {
         log.err("Failed to deinit device: {!}", .{err});
     };
 
-    dev.prepare(.min_available) catch |err| {
+    dev.prepare() catch |err| {
         log.err("Failed to prepare device: {!}", .{err});
     };
 
@@ -300,7 +300,7 @@ pub fn fullDuplexCallbackUnlinkedDevices() void {
         };
     }
 
-    dev.prepare(.min_available) catch |err| {
+    dev.prepare() catch |err| {
         log.err("Failed to prepare device: {!}", .{err});
         return;
     };
@@ -506,7 +506,7 @@ pub fn usingHardwareToInitDevice() void {
     std.debug.print("{s}", .{device});
 
     // Prepare the device for playback with the minimum available strategy
-    device.prepare(.min_available) catch |err| {
+    device.prepare() catch |err| {
         std.debug.print("Failed to prepare device: {}", .{err});
         return;
     };
@@ -560,7 +560,7 @@ pub fn manuallyInitializingDevice() void {
 
     std.debug.print("{s}", .{device});
 
-    device.prepare(.min_available) catch |err| {
+    device.prepare() catch |err| {
         std.debug.print("Failed to prepare device: {}", .{err});
     };
 }

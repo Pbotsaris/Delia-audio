@@ -434,7 +434,10 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
         /// Returns an error if any of the ALSA API calls fail, including memory allocation for
         /// software parameters, setting the current software parameters, or preparing the device
         /// for playback/capture.
-        pub fn prepare(self: *Self, strategy: Strategy) DeviceSoftwareError!void {
+        /// TODO: REMOVE STARETEGY WE DO ONOOT NEED IT
+        /// FALLBACK WITH DIRECT WRITE IF MMAP IS NOT AVAILABLE
+        /// FALLBACK TO non-interleaved ONLY CARDS
+        pub fn prepare(self: *Self) DeviceSoftwareError!void {
             var err = c_alsa.snd_pcm_sw_params_malloc(&self.sw_params);
 
             if (err < 0) {
@@ -449,9 +452,8 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                 return DeviceSoftwareError.software_params;
             }
 
-            // If we are using period_event strategy, we set the avail_min to the hardware buffer size
-            // essentially disabling this mechanism in favor of polling for period events
-            const min_size = if (strategy == Strategy.period_event) self.hardware_buffer_size else @intFromEnum(self.buffer_size);
+            // using min_available strategy
+            const min_size = @intFromEnum(self.buffer_size);
 
             err = c_alsa.snd_pcm_sw_params_set_avail_min(self.pcm_handle, self.sw_params, min_size);
 
@@ -513,18 +515,10 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                 return DeviceSoftwareError.set_timestamp;
             }
 
-            if (strategy == Strategy.period_event) {
-                if (c_alsa.snd_pcm_sw_params_set_period_event(self.pcm_handle, self.sw_params, 1) < 0) {
-                    log.err("Failed to enable period event: {s}", .{c_alsa.snd_strerror(err)});
-                    return DeviceSoftwareError.set_period_event;
-                }
-
-                err = c_alsa.snd_pcm_sw_params(self.pcm_handle, self.sw_params);
-            } else {
-                if (c_alsa.snd_pcm_sw_params_set_period_event(self.pcm_handle, self.sw_params, 0) < 0) {
-                    log.err("Failed to disable period event: {s}", .{c_alsa.snd_strerror(err)});
-                    return DeviceSoftwareError.set_period_event;
-                }
+            // No period events as we are using min_available strategy only
+            if (c_alsa.snd_pcm_sw_params_set_period_event(self.pcm_handle, self.sw_params, 0) < 0) {
+                log.err("Failed to disable period event: {s}", .{c_alsa.snd_strerror(err)});
+                return DeviceSoftwareError.set_period_event;
             }
 
             if (err < 0) {
@@ -541,7 +535,7 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                 }
             }
 
-            self.strategy = strategy;
+            self.strategy = .min_available;
         }
 
         pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -688,9 +682,9 @@ pub fn FullDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
             };
         }
 
-        pub fn prepare(self: *Self, strategy: Strategy) DeviceSoftwareError!void {
-            try self.playback_device.prepare(strategy);
-            try self.capture_device.prepare(strategy);
+        pub fn prepare(self: *Self) DeviceSoftwareError!void {
+            try self.playback_device.prepare();
+            try self.capture_device.prepare();
         }
 
         pub fn start(self: Self, ctx: *ContextType, callback: AudioCallback) !void {
