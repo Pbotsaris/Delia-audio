@@ -75,16 +75,14 @@ pub const ChannelCount = enum(u32) {
 /// non-interleaved channels [L1 L2 L3 L4 L5 L6... R1 R2 R3 R4 R5 R6...]
 pub const AccessType = enum(c_uint) {
     /// read-only access: simpler API
-    //. use `snd_pcm_readi` and `snd_pcm_writei` to read/write smaples.
+    /// use `snd_pcm_readi` and `snd_pcm_writei` to read/write smaples.
     rw_interleaved = c_alsa.SND_PCM_ACCESS_RW_INTERLEAVED,
-    // NOT IN USE
-    // rw_noninterleaved = c_alsa.SND_PCM_ACCESS_RW_NONINTERLEAVED,
+    rw_noninterleaved = c_alsa.SND_PCM_ACCESS_RW_NONINTERLEAVED,
 
     /// MMAP access: more efficient
     /// can directly map the ALSA b uffer into the application's memory space
     mmap_interleaved = c_alsa.SND_PCM_ACCESS_MMAP_INTERLEAVED,
-    // NOT IN USE
-    // mmap_noninterleaved = c_alsa.SND_PCM_ACCESS_MMAP_NONINTERLEAVED,
+    mmap_noninterleaved = c_alsa.SND_PCM_ACCESS_MMAP_NONINTERLEAVED,
 
     // NOTE: ommting `SND_PCM_ACCESS_MMAP_COMPLEX`
 };
@@ -406,6 +404,18 @@ pub const formats: [@typeInfo(FormatType).Enum.fields.len]c_int = blk: {
     const info = @typeInfo(FormatType);
     const len = info.Enum.fields.len;
     var temp: [len]c_int = undefined;
+
+    for (0..len) |i| {
+        temp[i] = info.Enum.fields[i].value;
+    }
+
+    break :blk temp;
+};
+
+pub const access_types: [@typeInfo(AccessType).Enum.fields.len]c_uint = blk: {
+    const info = @typeInfo(AccessType);
+    const len = info.Enum.fields.len;
+    var temp: [len]c_uint = undefined;
 
     for (0..len) |i| {
         temp[i] = info.Enum.fields[i].value;

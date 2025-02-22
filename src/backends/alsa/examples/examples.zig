@@ -30,7 +30,9 @@ const FullDuplexDevice = alsa.driver.FullDuplexDevice(FullDuplexContext, .{
 
 const HalfDuplexPlaybackContext = struct {
     const Self = @This();
-    w: wave.Wave(f32) = wave.Wave(f32).init(100.0, 0.2, 48000.0),
+    const T = HalfDuplexDevice.FloatType();
+
+    w: wave.Wave(T) = wave.Wave(T).init(100.0, 0.2, 48000.0),
 
     pub fn callback(self: *Self, data: HalfDuplexDevice.AudioDataType()) void {
         self.w.setSampleRate(@floatFromInt(data.sample_rate));
@@ -62,14 +64,23 @@ const FullDuplexContext = struct {
     w: wave.Wave(f32) = wave.Wave(f32).init(100.0, 0.2, 48000.0),
 
     const AudioDataType = FullDuplexDeviceWithProbe.AudioDataType();
+    const T = FullDuplexDeviceWithProbe.FloatType();
 
     pub fn callback(self: *Self, in: AudioDataType, out: AudioDataType) void {
         self.w.setSampleRate(@floatFromInt(in.sample_rate));
 
-        for (0..out.totalSampleCount()) |_| {
-            const sample = self.w.sineSample();
+        for (0..in.totalSampleCount()) |_| {
+            var maybe_sample: ?T = null;
 
+            // of more than one channel, just grab the last one
+            for (0..in.channels) |_| {
+                maybe_sample = in.readSample();
+            }
+
+            // write the sample to all channels
             for (0..out.channels) |_| {
+                const sample = maybe_sample orelse 0.0;
+
                 out.writeSample(sample) catch {
                     return;
                 };

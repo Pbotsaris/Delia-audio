@@ -42,6 +42,7 @@ const AudioCardSettings = struct {
     format: ?FormatType = null,
     sample_rate: ?SampleRate = null,
     channels: ?ChannelCount = null,
+    access_type: ?settings.AccessType = null,
 };
 
 /// `AudioCardInfo` holds detailed information about an ALSA audio card or port.
@@ -126,9 +127,10 @@ pub const AudioCardInfo = struct {
         const ss = self.supported_settings orelse return;
 
         // defaults
-        if (ss.formats.items.len >= 0) self.selected_settings.format = ss.formats.items[0];
-        if (ss.sample_rates.items.len >= 0) self.selected_settings.sample_rate = ss.sample_rates.items[0];
-        if (ss.channel_counts.items.len >= 0) self.selected_settings.channels = ss.channel_counts.items[0];
+        self.selected_settings.format = ss.default(FormatType);
+        self.selected_settings.sample_rate = ss.default(SampleRate);
+        self.selected_settings.channels = ss.default(ChannelCount);
+        self.selected_settings.access_type = ss.default(settings.AccessType);
     }
 
     pub fn format(self: AudioCardInfo, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {

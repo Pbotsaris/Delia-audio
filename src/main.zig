@@ -34,7 +34,7 @@ pub fn main() !void {
 
     //        return err;
     //    };
-    // backends.alsa.examples.printingHardwareInfo();
+    //   backends.alsa.examples.printingHardwareInfo();
     //backends.alsa.examples.findAndPrintCardPortInfo("USB");
     //backends.alsa.examples.selectAudioPortCounterpart();
     // backends.alsa.examples.fullDuplexCallback();
