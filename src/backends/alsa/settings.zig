@@ -19,39 +19,10 @@ pub const StreamType = enum(c_uint) {
 };
 
 pub const StartThreshold = enum(u32) {
-    now = 0,
+    immediate = 0,
     fill_one_period = 1,
+    disabled = 0x7fffffff,
 };
-
-/// The `Strategy` enum defines the method by which ALSA will handle audio data transfer.
-///
-/// - `period_event`:
-///   - This strategy enables period events, which means the ALSA hardware will trigger
-///     an interrupt after every period is processed. This approach can reduce CPU usage
-///     by allowing the system to sleep until the period event occurs, making it suitable
-///     for low-latency applications.
-///   - When this strategy is selected, the `avail_min` is set to the full hardware buffer size,
-///     essentially relying on interrupt-driven processing rather than polling or manually
-///     checking for available buffer space.
-///
-/// - `min_available`:
-///   - This strategy disables period events and instead sets `avail_min` to the size of the
-///     period buffer. This means the application will handle data transfer whenever the
-///     buffer has enough space for a full period. It is typically used in scenarios where
-///     more precise control over buffer availability is needed, and where polling or
-///     manual checks are preferred over interrupt-driven processing.
-pub const Strategy = enum {
-    period_event,
-    min_available,
-};
-
-//pub const BufferSize = enum(u32) {
-//    bz_216 = 216,
-//    bz_512 = 512,
-//    bz_1024 = 1024,
-//    bz_2048 = 2048,
-//    bz_4096 = 4096,
-//};
 
 pub const ChannelCount = enum(u32) {
     mono = 1,

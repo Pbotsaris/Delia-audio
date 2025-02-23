@@ -158,8 +158,9 @@ pub fn halfDuplexCapture() void {
 fn probeCallback(data: latency.LatencyData) void {
     var actual_time_buf: [64]u8 = undefined;
     var expect_time_buf: [64]u8 = undefined;
-    var latency_buf: [64]u8 = undefined;
-
+    var total_latency_buf: [64]u8 = undefined;
+    var avg_latency_buf: [64]u8 = undefined;
+    var buffer_latency_buf: [64]u8 = undefined;
     var start_time_buf: [64]u8 = undefined;
     var end_time_buf: [64]u8 = undefined;
 
@@ -171,15 +172,27 @@ fn probeCallback(data: latency.LatencyData) void {
         return;
     };
 
-    // the time it should have taken to process the frames
+    // the time it should have taken to process the frames vs what it actually took
     const expect_time = data.expect_time.formatBuf(&expect_time_buf) catch |err| {
         log.warn("Failed to format expect time: {!}", .{err});
         return;
     };
 
-    // the difference between the actual and expected time, or the latency
-    const lat = data.latency.formatBuf(&latency_buf) catch |err| {
+    // the latency introduced by the hardware buffering
+    const buf_lat = data.buffer_latency.formatBuf(&buffer_latency_buf) catch |err| {
+        log.warn("Failed to format buffer latency: {!}", .{err});
+        return;
+    };
+
+    // the total latency acrued across the number of cycles (buffer_cycles)
+    const total_latency = data.total_latency.formatBuf(&total_latency_buf) catch |err| {
         log.warn("Failed to format latency: {!}", .{err});
+        return;
+    };
+
+    // the average latency for one cycle so basically total latency / buffer_cycles
+    const average_latency = data.average_latency.formatBuf(&avg_latency_buf) catch |err| {
+        log.warn("Failed to format average latency: {!}", .{err});
         return;
     };
 
@@ -201,7 +214,9 @@ fn probeCallback(data: latency.LatencyData) void {
         \\ End Time: {s}
         \\ Actual Time: {s}
         \\ Expected Time: {s}
-        \\ Latency: {s}
+        \\ Total Latency: {s}
+        \\ Average Latency: {s}
+        \\ Buffer Latency: {s}
         \\ Frames Processed: {d} frames
         \\ Buffers Processed: {d} 
     , .{
@@ -209,7 +224,9 @@ fn probeCallback(data: latency.LatencyData) void {
         end_time,
         actual_time,
         expect_time,
-        lat,
+        total_latency,
+        average_latency,
+        buf_lat,
         data.frames_processed,
         data.cycles,
     });
@@ -296,10 +313,17 @@ pub fn fullDuplexCallbackUnlinkedDevices() void {
     };
 
     // note: if playback does not support the capture sample rate, driver will fail to start
-    var dev = FullDuplexDevice.init(allocator, .{
+    var dev = FullDuplexDeviceWithProbe.init(allocator, .{
         .sample_rate = samples_rate,
         .channels = .{ .playback = .stereo, .capture = channels },
         .ident = .{ .playback = "hw:3,0", .capture = capture.identifier },
+        .buffer_size = .buf_512,
+        .n_periods = 8,
+        .probe_options = .{
+            .callback = probeCallback,
+            // the number buffer_size * n_periods to process before calculating the latency
+            .buffer_cycles = 40,
+        },
     }) catch |err| {
         log.err("Failed to init device: {!}", .{err});
         return;

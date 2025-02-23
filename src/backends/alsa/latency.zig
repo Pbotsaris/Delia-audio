@@ -24,7 +24,9 @@ pub const LatencyData = struct {
     end_time: TimeSpec,
     expect_time: TimestampDiff,
     actual_time: TimestampDiff,
-    latency: TimestampDiff,
+    total_latency: TimestampDiff,
+    average_latency: TimestampDiff,
+    buffer_latency: TimestampDiff,
     frames_processed: usize,
     cycles: u32,
 };
@@ -47,8 +49,12 @@ pub const Probe = struct {
     max_frames: usize,
     /// The user-defined callback function that is called when the probe is complete
     callback: ProbeCallback,
+    /// The latency introduced by the hardware buffering
+    buffer_latency: TimestampDiff,
 
     pub fn init(callback: ProbeCallback, opts: ProbeOptions) Probe {
+        const buff_latency_micros = opts.hardware_buffer_size * s_to_us / opts.sample_rate;
+
         return .{
             .sample_rate = opts.sample_rate,
             .hardware_buffer_size = opts.hardware_buffer_size,
@@ -56,6 +62,7 @@ pub const Probe = struct {
             .buffer_cycles = opts.buffer_cycles,
             .max_frames = opts.buffer_cycles * opts.hardware_buffer_size,
             .callback = callback,
+            .buffer_latency = TimestampDiff.fromMicros(buff_latency_micros),
         };
     }
 
@@ -100,17 +107,21 @@ pub const Probe = struct {
 
         const actual_time = start_time.diff(now);
 
-        const latency = LatencyData{
+        const latency = actual_time.diff(expect_time);
+
+        const data = LatencyData{
             .start_time = start_time,
             .end_time = now,
             .actual_time = actual_time,
             .expect_time = expect_time,
-            .latency = expect_time.diff(actual_time),
+            .total_latency = latency,
+            .average_latency = latency.div(@as(i64, @intCast(self.buffer_cycles))),
+            .buffer_latency = self.buffer_latency,
             .frames_processed = self.frames_processed,
             .cycles = self.buffer_cycles,
         };
 
-        self.callback(latency);
+        self.callback(data);
     }
 
     pub inline fn framesToMicros(self: Probe) i64 {
@@ -148,26 +159,41 @@ const TimeSpec = struct {
     /// Formats TimeSpec as a string in the format e.g. "1h 10m 1s 2ms 3us"
     /// Truncates the resolution to microseconds
     pub fn formatBuf(self: TimeSpec, buf: []u8) ![]u8 {
-        const total_seconds = self.tv_sec;
+        var sec = self.tv_sec;
+        var nsec = self.tv_nsec;
+
+        // Handle negative values
+        const is_negative = sec < 0 or nsec < 0;
+
+        if (is_negative) {
+            if (nsec > 0) {
+                // borrow a sec
+                sec += 1;
+                nsec -= 1_000_000_000;
+            }
+
+            sec = -sec;
+            nsec = -nsec;
+        }
+
+        const total_seconds = sec;
         const hours = @divTrunc(total_seconds, 3600);
         const minutes = @divTrunc(@mod(total_seconds, 3600), 60);
         const seconds = @mod(total_seconds, 60);
-        const millis = @divTrunc(self.tv_nsec, 1_000_000);
-        const micros = @mod(@divTrunc(self.tv_nsec, 1000), 1000);
+        const millis = @divTrunc(nsec, 1_000_000);
+        const micros = @mod(@divTrunc(nsec, 1000), 1000);
+
+        const sign = if (is_negative) "-" else "";
 
         if (hours > 0) {
-            return std.fmt.bufPrint(buf, "{d}h {d}m {d}s {d}ms {d}us", .{ hours, minutes, seconds, millis, micros });
+            return std.fmt.bufPrint(buf, "{s}{d}h {d}m {d}s {d}ms {d}us", .{ sign, hours, minutes, seconds, millis, micros });
         }
-        if (minutes > 0) {
-            return std.fmt.bufPrint(buf, "{d}m {d}s {d}ms {d}us", .{ minutes, seconds, millis, micros });
-        }
-        if (seconds > 0) {
-            return std.fmt.bufPrint(buf, "{d}s {d}ms {d}us", .{ seconds, millis, micros });
-        }
-        if (millis > 0) {
-            return std.fmt.bufPrint(buf, "{d}ms {d}us", .{ millis, micros });
-        }
-        return std.fmt.bufPrint(buf, "{d}us", .{micros});
+
+        if (minutes > 0) return std.fmt.bufPrint(buf, "{s}{d}m {d}s {d}ms {d}us", .{ sign, minutes, seconds, millis, micros });
+        if (seconds > 0) return std.fmt.bufPrint(buf, "{s}{d}s {d}ms {d}us", .{ sign, seconds, millis, micros });
+        if (millis > 0) return std.fmt.bufPrint(buf, "{s}{d}ms {d}us", .{ sign, millis, micros });
+
+        return std.fmt.bufPrint(buf, "{s}{d}us", .{ sign, micros });
     }
 
     /// Convert TimeSpec to microseconds as an integer
@@ -204,19 +230,56 @@ pub const TimestampDiff = struct {
     sec: i64,
     usec: i64,
 
-    /// Compute the difference between two TimestampDiff structs
     fn diff(self: TimestampDiff, other: TimestampDiff) TimestampDiff {
+        var sec = self.sec - other.sec;
+        var usec = self.usec - other.usec;
+
+        if (usec < 0) {
+            sec -= 1;
+            usec += 1_000_000;
+        }
+
         return .{
-            .sec = self.sec - other.sec,
-            .usec = self.usec - other.usec,
+            .sec = sec,
+            .usec = usec,
         };
     }
 
-    fn fromMicros(micros: i64) TimestampDiff {
+    fn sum(self: TimestampDiff, other: TimestampDiff) TimestampDiff {
+        var sec = self.sec + other.sec;
+        var usec = self.usec + other.usec;
+
+        if (usec >= 1_000_000) {
+            sec += 1;
+            usec -= 1_000_000;
+        }
+
         return .{
-            .sec = @divTrunc(micros, 1_000_000),
-            .usec = @mod(micros, 1_000_000),
+            .sec = sec,
+            .usec = usec,
         };
+    }
+
+    fn div(self: TimestampDiff, divisor: i64) TimestampDiff {
+        if (divisor <= 0) {
+            log.warn("latency.TimestampDiff: Cannot divide by zero.", .{});
+            return self;
+        }
+
+        const self_micros = self.toMicros();
+        return TimestampDiff.fromMicros(@divFloor(self_micros, divisor));
+    }
+
+    fn fromMicros(micros: i64) TimestampDiff {
+        var sec = @divTrunc(micros, 1_000_000);
+        var usec = @rem(micros, 1_000_000);
+
+        if (usec < 0) {
+            sec -= 1;
+            usec += 1_000_000;
+        }
+
+        return .{ .sec = sec, .usec = usec };
     }
 
     /// Convert TimestampDiff to microseconds as an integer
@@ -236,18 +299,34 @@ pub const TimestampDiff = struct {
     /// If the value is less than 1 second, the seconds are omitted
     /// Truncates the resolution to microseconds
     pub fn formatBuf(self: TimestampDiff, buf: []u8) ![]u8 {
-        const total_millis = @divTrunc(self.toMicros(), 1000);
+        var micros = self.toMicros();
+
+        const is_negative = micros < 0;
+
+        if (is_negative) {
+            micros = -micros;
+        }
+
+        const total_millis = @divTrunc(micros, 1000);
         const whole_seconds = @divTrunc(total_millis, 1000);
         const remaining_millis = @mod(total_millis, 1000);
-        const remaining_micros = @mod(self.usec, 1000);
+        const remaining_micros = @mod(micros, 1000);
 
         if (whole_seconds > 0) {
-            return std.fmt.bufPrint(buf, "{d}s {d}ms {d}us", .{ whole_seconds, remaining_millis, remaining_micros });
+            return std.fmt.bufPrint(buf, "{s}{d}s {d}ms {d}us", .{
+                if (is_negative) "-" else "",
+                whole_seconds,
+                remaining_millis,
+                remaining_micros,
+            });
         }
         if (remaining_millis > 0) {
-            return std.fmt.bufPrint(buf, "{d}ms {d}us", .{ remaining_millis, remaining_micros });
+            return std.fmt.bufPrint(buf, "{s}{d}ms {d}us", .{
+                if (is_negative) "-" else "",
+                remaining_millis,
+                remaining_micros,
+            });
         }
-
-        return std.fmt.bufPrint(buf, "{d}us", .{remaining_micros});
+        return std.fmt.bufPrint(buf, "{s}{d}us", .{ if (is_negative) "-" else "", remaining_micros });
     }
 };

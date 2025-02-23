@@ -8,15 +8,10 @@
 //! for minimizing latency and optimizing performance. This can be further customized by adjusting
 //! the opts.n_periods to increase the number of periods per hardware buffer.
 
-// TODO: Create an Alsa Allocator following the same pattern as STD for memory allocation
 const std = @import("std");
 
 const c_alsa = @cImport({
     @cInclude("asoundlib.h");
-});
-
-const c = @cImport({
-    @cInclude("sys/poll.h");
 });
 
 const log = std.log.scoped(.alsa);
@@ -30,7 +25,6 @@ pub const ByteOrder = @import("settings.zig").ByteOrder;
 pub const FormatType = @import("settings.zig").FormatType;
 pub const AccessType = @import("settings.zig").AccessType;
 pub const StreamType = @import("settings.zig").StreamType;
-pub const Strategy = @import("settings.zig").Strategy;
 pub const StartThreshold = @import("settings.zig").StartThreshold;
 pub const ChannelCount = @import("settings.zig").ChannelCount;
 pub const Mode = @import("settings.zig").Mode;
@@ -53,13 +47,9 @@ const HalfDuplexDeviceOptions = struct {
     buffer_size: BufferSize = BufferSize.buf_1024,
     timeout: i32 = -1,
     n_periods: u32 = 5,
-    start_thresh: StartThreshold = .fill_one_period,
+    start_thresh: StartThreshold = .disabled,
     must_prepare: bool = true,
     probe_options: ?ProbeOptions = null,
-    // not exposed to the caller
-    // access type defaults to mmap interleaved and will fallback to rw interleaved
-    // access_type: AccessType = AccessType.mmap_interleaved,
-    // mode: Mode = Mode.none,
 };
 
 pub const DeviceHardwareError = error{
@@ -96,6 +86,7 @@ pub const AudioLoopError = error{
     unsupported,
     audio_buffer_nonalignment,
     poll_alloc,
+    buffer_size,
 };
 
 pub const DeviceComptimeOptions = struct {
@@ -148,7 +139,7 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
         buffer_size: BufferSize,
         /// Total size of the hardware audio buffer in frames.
         hardware_buffer_size: u32,
-        /// Size of one hardware period in frames.
+        /// Size of one hardware period in frames. Same as buffer size.
         hardware_period_size: u32,
         /// Number of frames before ALSA starts reading/writing audio data.
         start_thresh: u32,
@@ -161,22 +152,19 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
         access_type: AccessType = AccessType.mmap_interleaved,
         /// Manages Audio sample format (e.g., 16-bit signed little-endian).
         audio_format: Format(T),
-        /// TODO: Description
-        strategy: Strategy = Strategy.min_available,
-
         /// this constant will is the multiplier that will define the size of the hardware buffer size.
         ///  hardware_buffer_size = user_defined_buffer_size * NB_PERIODS
         n_periods: u32,
 
-        // Use RW transfers that require a buffer to store the data
+        /// Used on RW transfers that require a buffer to read/write data
         transfer_buffer: []u8 = undefined,
-
         allocator: std.mem.Allocator,
 
         /// wether HalfDuplexDevice.prepare will explicitly call snd_pcm_prepare.
         /// Useful snd_pcm_link devices and don't want to call prepare on the slave device
         must_prepare: bool = true,
 
+        /// Probe for measuring latency
         probe: ?latency.Probe,
 
         const DeviceOptionsFromHardware = struct {
@@ -185,8 +173,7 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
             start_thresh: StartThreshold = .fill_one_period,
             timeout: i32 = -1,
             must_prepare: bool = true,
-            // not exposed to the user for now
-            // access_type: AccessType = AccessType.mmap_interleaved,
+            probe_options: ?ProbeOptions = null,
         };
 
         // Initializes a `Device` using the provided `Hardware` configuration and additional options.
@@ -219,6 +206,7 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                 .start_thresh = inc_opts.start_thresh,
                 .timeout = inc_opts.timeout,
                 .must_prepare = inc_opts.must_prepare,
+                .probe_options = inc_opts.probe_options,
             };
 
             return try init(allocator, opts);
@@ -393,8 +381,16 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
             const frame_size: usize = @intFromEnum(opts.channels) * @sizeOf(T);
             const buffer_bytes: usize = frame_size * @intFromEnum(opts.buffer_size);
 
-            // either start with after filling one hardware buffer size or as soon as possible
-            const start_tresh: u32 = @as(u32, @intCast(@intFromEnum(opts.buffer_size))) * opts.n_periods * @as(u32, @intCast(@intFromEnum(opts.start_thresh)));
+            // start with after filling one hardware buffer size, as soon as possible, or disabled
+            const start_tresh: u32 = switch (opts.start_thresh) {
+                StartThreshold.fill_one_period => blk: {
+                    const buffer_size = @as(u32, @intCast(@intFromEnum(opts.buffer_size)));
+                    const thresh = @as(u32, @intCast(@intFromEnum(opts.start_thresh)));
+                    break :blk buffer_size * opts.n_periods * thresh;
+                },
+                StartThreshold.disabled => @as(u32, @intCast(@intFromEnum(opts.start_thresh))),
+                StartThreshold.immediate => 0,
+            };
 
             var probe: ?latency.Probe = null;
 
@@ -408,12 +404,9 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                 } else log.warn("Probe is enabled but no callback was provided. Will call noop callback.", .{});
             }
 
-            // we only allocate a buffer if we are using rw interleaved access type
-            const transfer_buffer: []u8 = switch (access_type) {
-                AccessType.mmap_interleaved => undefined,
-                AccessType.rw_interleaved => try allocator.alloc(u8, buffer_bytes),
-                else => unreachable,
-            };
+            // used for rw transfers
+            const transfer_buffer = try allocator.alloc(u8, buffer_bytes);
+            @memset(transfer_buffer, 0);
 
             return Self{
                 .pcm_handle = pcm_handle,
@@ -438,32 +431,6 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
             };
         }
 
-        ///
-        /// Prepares the ALSA device for playback or capture using the specified strategy.
-        /// This function configures the software parameters of the ALSA device, including the
-        /// method by which audio data will be transferred to or from the hardware.
-        ///
-        /// TODO: Maybe remove the period_event strategy and just use min_available
-        ///
-        /// # Parameters:
-        ///
-        /// - `strategy`: Specifies the data transfer strategy to be used.
-        ///   - `Strategy.period_event`:
-        ///     - Enables ALSA period events, allowing the application to receive notifications when
-        ///       a period boundary is reached. This strategy is ideal for applications that need precise
-        ///       timing and low-latency handling, as it relies on events instead of polling or buffering.
-        ///   - `Strategy.min_available`:
-        ///     - Sets `avail_min` to the size of the period buffer, meaning the application will
-        ///       handle data transfer when there is enough space in the buffer for a full period.
-        ///
-        /// # Errors:
-        ///
-        /// Returns an error if any of the ALSA API calls fail, including memory allocation for
-        /// software parameters, setting the current software parameters, or preparing the device
-        /// for playback/capture.
-        /// TODO: REMOVE STARETEGY WE DO ONOOT NEED IT
-        /// FALLBACK WITH DIRECT WRITE IF MMAP IS NOT AVAILABLE
-        /// FALLBACK TO non-interleaved ONLY CARDS
         pub fn prepare(self: *Self) DeviceSoftwareError!void {
             var err = c_alsa.snd_pcm_sw_params_malloc(&self.sw_params);
 
@@ -479,7 +446,6 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                 return DeviceSoftwareError.software_params;
             }
 
-            // using min_available strategy
             const min_size = @intFromEnum(self.buffer_size);
 
             err = c_alsa.snd_pcm_sw_params_set_avail_min(self.pcm_handle, self.sw_params, min_size);
@@ -489,11 +455,24 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                 return DeviceSoftwareError.set_avail_min;
             }
 
+            // start the playback or capture manually
             err = c_alsa.snd_pcm_sw_params_set_start_threshold(self.pcm_handle, self.sw_params, self.start_thresh);
 
             if (err < 0) {
                 log.err("Failed to set start threshold  to '{d}' frames: {s}", .{ self.start_thresh, c_alsa.snd_strerror(err) });
                 return DeviceSoftwareError.set_start_stop_threshold;
+            }
+
+            var set_start_thresh: c_alsa.snd_pcm_uframes_t = 0;
+
+            err = c_alsa.snd_pcm_sw_params_get_start_threshold(self.sw_params, &set_start_thresh);
+
+            if (err < 0) {
+                log.err("Failed to get start threshold: {s}", .{c_alsa.snd_strerror(err)});
+            }
+
+            if (set_start_thresh != self.start_thresh) {
+                log.warn("Start threshold was not set properly. Expected: {d} but found: {d}", .{ self.start_thresh, set_start_thresh });
             }
 
             err = c_alsa.snd_pcm_sw_params_set_stop_threshold(self.pcm_handle, self.sw_params, self.stop_thresh);
@@ -561,8 +540,6 @@ pub fn HalfDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptim
                     return DeviceSoftwareError.prepare;
                 }
             }
-
-            self.strategy = .min_available;
         }
 
         pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -946,8 +923,6 @@ fn HalfDuplexAudioLoop(ContextType: type, comptime comptime_opts: DeviceComptime
 
                     const frames_actually_transfered = c_alsa.snd_pcm_mmap_commit(self.device.pcm_handle, offset, expected_to_transfer);
 
-                    // log.debug("Transferred {d} frames", .{frames_actually_transfered});
-
                     if (frames_actually_transfered < 0) {
                         try self.xrunRecovery(@intCast(frames_actually_transfered));
                     } else if (frames_actually_transfered != expected_to_transfer) try self.xrunRecovery(-c_alsa.EPIPE);
@@ -1081,6 +1056,11 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
         pub fn start(self: *Self) !void {
             self.running = true;
 
+            if (self.device.playback_device.buffer_size != self.device.capture_device.buffer_size) {
+                log.err("Capture and playback buffer size should be the same", .{});
+                return AudioLoopError.buffer_size;
+            }
+
             switch (self.device.capture_device.access_type) {
                 AccessType.mmap_interleaved => {
                     if (self.device.is_linked) try self.mmapTransferLinked() else try self.mmapTransfer();
@@ -1096,6 +1076,8 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
         }
 
         fn mmapTransfer(self: *Self) !void {
+            try self.silencePlayback();
+
             // capture and playback buffer size should be the same
             const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
 
@@ -1142,8 +1124,8 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
 
                     self.callback(self.ctx, &capture_data, &playback_data);
 
-                    const capture_transferred = try self.commit(capture_offset, capture_expected_transfer, .capture);
                     const playback_transferred = try self.commit(playback_offset, playback_expected_transfer, .playback);
+                    const capture_transferred = try self.commit(capture_offset, capture_expected_transfer, .capture);
 
                     const frames_transferred = @min(capture_transferred, playback_transferred);
 
@@ -1224,8 +1206,16 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
         fn rwTransfer(self: *Self) !void {
             const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
 
+            if (Device.PROBE_ENABLED) {
+                if (self.device.playback_device.probe) |*p| p.start();
+            }
+
             while (self.running) {
-                const status = try self.checkUnlinkedAvailability(buffer_size);
+                const status = switch (self.device.is_linked) {
+                    false => try self.checkUnlinkedAvailability(buffer_size),
+                    true => try self.checkLinkedAvailability(buffer_size),
+                };
+
                 if (status == .skip) continue;
 
                 var to_transfer = buffer_size;
@@ -1262,6 +1252,10 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
                     }
 
                     const frames_transferred = @min(frames_read, frames_written);
+
+                    if (Device.PROBE_ENABLED) {
+                        if (self.device.playback_device.probe) |*p| p.addFrames(frames_transferred);
+                    }
 
                     self.total_frames += frames_transferred;
 
@@ -1325,6 +1319,28 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
                         return AudioLoopError.unexpected;
                     }
                 },
+            }
+        }
+
+        fn silencePlayback(self: *Self) !void {
+            const buffer_size: c_ulong = @intFromEnum(self.device.playback_device.buffer_size);
+
+            for (self.device.playback_device.n_periods) |_| {
+                var offset: c_ulong = 0;
+                var expected_transfer: c_ulong = buffer_size;
+
+                const playback_buffer = try self.begin(&offset, &expected_transfer, .playback);
+                // we use the rw buffer to silence the playback for mmap access
+                @memcpy(playback_buffer, self.device.playback_device.transfer_buffer);
+
+                _ = try self.commit(offset, expected_transfer, .playback);
+            }
+
+            if (c_alsa.snd_pcm_start(self.device.capture_device.pcm_handle) < 0) {
+                return AudioLoopError.start;
+            }
+            if (c_alsa.snd_pcm_start(self.device.playback_device.pcm_handle) < 0) {
+                return AudioLoopError.start;
             }
         }
 
@@ -1523,7 +1539,7 @@ fn FullDuplexAudioLoop(ContextType: type, comptime_opts: DeviceComptimeOptions) 
 
             const needs_prepare = switch (err) {
                 AudioLoopError.xrun => blk: {
-                    // log.debug("Xrun recovery in {s} stream: {s}", .{ @tagName(stream_type), c_alsa.snd_strerror(c_err) });
+                    log.debug("Xrun recovery in {s} stream: {s}", .{ @tagName(stream_type), c_alsa.snd_strerror(c_err) });
                     //log.warn("Total frames at this point??: {d}", .{self.total_frames});
                     break :blk true;
                 },
