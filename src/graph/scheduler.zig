@@ -1,7 +1,7 @@
 const std = @import("std");
 const graph = @import("graph.zig");
 const specs = @import("../common/audio_specs.zig");
-const audio_buffer = @import("audio_buffer.zig");
+const audio_buffer = @import("../common/audio_buffer.zig");
 
 const log = std.log.scoped(.graph);
 
@@ -32,6 +32,7 @@ pub fn Scheduler(comptime T: type) type {
             };
         }
 
+        // this is just an example, graphs as built dynamically
         pub fn build_graph(self: *Self, sample_rate: specs.SampleRate) !void {
             var sine_node = try self.audio_graph.addNode(SineNode.init(540.0, 1.0, sample_rate.toFloat(T)));
 
@@ -70,7 +71,7 @@ pub fn Scheduler(comptime T: type) type {
             });
         }
 
-        pub fn process(self: *Self) !void {
+        pub fn processGraph(self: *Self) !void {
             // WORK IN PROGRESS NOT READY TODO
             const queue = self.topology_queue orelse return;
             var buffers = self.buffers orelse return;

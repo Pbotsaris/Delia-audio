@@ -115,20 +115,45 @@ pub fn GenericAudioData(format_type: FormatType) type {
             return samples;
         }
 
+        pub fn readAll(self: *Self, samples: []FloatType()) ![]FloatType() {
+            if (self.data.len == 0) return samples;
+
+            const sample_size_as_float = @sizeOf(FloatType());
+            const actual_sample_size = @sizeOf(T);
+
+            // if the sample size is not a multiple of the data length, there is a bug. It should never happen
+            if (self.data.len % actual_sample_size != 0) {
+                return AudioDataError.unexpected_buffer_size;
+            }
+
+            const samples_len = @divFloor(self.data.len, sample_size_as_float);
+
+            if (samples.len < samples_len) {
+                return AudioDataError.invalid_size;
+            }
+
+            for (0..samples_len) |sample_index| {
+                const sample: FloatType() = self.readSample() orelse return samples;
+                samples[sample_index] = sample;
+            }
+
+            return samples;
+        }
+
         pub fn rewind(self: *Self) void {
             self.position = 0;
         }
 
-        pub fn bufferSizeInSamles(self: Self) usize {
+        pub fn bufferSizeInSamples(self: Self) usize {
             return @divFloor(self.data.len, @sizeOf(T));
         }
 
         pub fn bufferSizeInFrames(self: Self) usize {
-            return @divFloor(self.bufferSizeInSamles(), self.channels);
+            return @divFloor(self.bufferSizeInSamples(), self.channels);
         }
 
         pub fn totalSampleCount(self: Self) usize {
-            return self.bufferSizeInSamles() * self.channels;
+            return self.bufferSizeInSamples() * self.channels;
         }
 
         pub fn seek(self: *Self, sample_position: usize) !void {

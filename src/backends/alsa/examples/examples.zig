@@ -5,8 +5,6 @@ const latency = @import("../latency.zig");
 
 const log = std.log.scoped(.alsa);
 
-// TODO: Please check this code still runs
-
 // providing the format and the context in which you callback will ruin from
 // at comptime type will allow operation on device to be type safe
 const HalfDuplexDevice = alsa.driver.HalfDuplexDevice(HalfDuplexPlaybackContext, .{
@@ -53,8 +51,10 @@ const HalfDuplexCaptureContext = struct {
     const Self = @This();
 
     pub fn callback(_: *Self, data: HalfDuplexDevice.AudioDataType()) void {
-        std.debug.print("in samples: {d}\n", .{data.totalSampleCount()});
-        std.debug.print("in channels: {d}\n", .{data.channels});
+        log.debug("in sample rate: {d}\n", .{data.sample_rate});
+        log.debug("in format: {d}\n", .{data.format});
+        log.debug("in channels: {d}\n", .{data.channels});
+        log.debug("in total sample count: {d}\n", .{data.totalSampleCount()});
     }
 };
 
@@ -66,6 +66,7 @@ const FullDuplexContext = struct {
     const AudioDataType = FullDuplexDeviceWithProbe.AudioDataType();
     const T = FullDuplexDeviceWithProbe.FloatType();
 
+    // writes in to out
     pub fn callback(self: *Self, in: AudioDataType, out: AudioDataType) void {
         self.w.setSampleRate(@floatFromInt(in.sample_rate));
 

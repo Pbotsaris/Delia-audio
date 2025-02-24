@@ -1,8 +1,8 @@
 const std = @import("std");
-const alsa = @import("backends//backends.zig").alsa;
 const dsp = @import("dsp/dsp.zig");
 const graph = @import("graph/graph.zig");
 const specs = @import("common/audio_specs.zig");
+const alsa = @import("backends/backends.zig").alsa;
 
 pub const std_options = .{
     .log_level = .debug,
@@ -16,7 +16,10 @@ const format = alsa.driver.FormatType.signed_16bits_little_endian;
 
 // Create a device time for this given format and struct that will server as the context
 // for the callback
-const Device = alsa.driver.HalfDuplexDevice(format, Example);
+const Device = alsa.driver.HalfDuplexDevice(Example, .{
+    .format = format,
+});
+
 const AudioDataType = Device.AudioDataType();
 
 // get the float for the given audio format
@@ -56,7 +59,7 @@ pub const Example = struct {
         try self.scheduler.prepare(.{
             .n_channels = 2,
             .block_size = .blk_256,
-            .sample_rate = self.sample_rate.toFloat(f32),
+            .sample_rate = self.sample_rate.toFloat(T),
             .access_pattern = .interleaved,
         });
 
@@ -71,7 +74,7 @@ pub const Example = struct {
         const iterations = @divFloor(buffer_size, process_block_size);
 
         for (iterations) |_| {
-            ctx.scheduler.process() catch |err| {
+            ctx.scheduler.processGraph() catch |err| {
                 log.err("Failed to process data: {any}", .{err});
                 return;
             };

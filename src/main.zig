@@ -15,52 +15,32 @@ pub const std_options = .{
 
 const log = std.log.scoped(.main);
 
-const Client = backends.jack.client.JackClient;
-const Hardware = backends.jack.Hardware;
-
-//fn examplePlaybackAndGraph() !void {
-//    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-//    const allocator = gpa.allocator();
-//    var e = try ex.Example.init(allocator, audio_specs.SampleRate.sr_44100);
+// fn examplePlaybackAndGraph() !void {
+//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//     const allocator = gpa.allocator();
+//     var e = try ex.Example.init(allocator, audio_specs.SampleRate.sr_44100);
 //
-//    try e.prepare();
-//    try e.run();
-//    try e.deinit();
-//}
+//     try e.prepare();
+//     try e.run();
+//     try e.deinit();
+// }
 pub fn main() !void {
-
-    //        log.err("{any}", .{err});
     //    examplePlaybackAndGraph() catch |err| {
-
-    //        return err;
+    //        log.err("Failed to run example: {!}", .{err});
     //    };
-    //   backends.alsa.examples.printingHardwareInfo();
-    //backends.alsa.examples.findAndPrintCardPortInfo("USB");
-    //backends.alsa.examples.selectAudioPortCounterpart();
-    // backends.alsa.examples.fullDuplexCallback();
-    //   backends.alsa.examples.fullDuplexCallbackWithLatencyProbe();
-    //   backends.alsa.examples.halfDuplexCapture();
-    backends.alsa.examples.fullDuplexCallbackUnlinkedDevices();
-    //backends.alsa.examples.playbackSineWave();
+
+    // backends.alsa.examples.printingHardwareInfo();
+    // backends.alsa.examples.findAndPrintCardPortInfo("USB");
+    // backends.alsa.examples.selectAudioPortCounterpart();
+    // backends.alsa.examples.fullDuplexCallbackWithLatencyProbe();
+    // backends.alsa.examples.fullDuplexCallbackWithLatencyProbe();
+    // backends.alsa.examples.halfDuplexCapture();
+    // backends.alsa.examples.fullDuplexCallbackUnlinkedDevices();
+    // backends.alsa.examples.playbackSineWave();
 
     // backends.alsa.examples.usingHardwareToInitDevice();
     // std.debug.print("audio_backend: {any}\n", .{audio_backend.audio_backend});
 
-    //    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    //    const allocator = gpa.allocator();
-    //
-    //    const client = try Client.init(.{ .client_name = "device" });
-    //
-    //    const hw = try Hardware.init(allocator, client);
-    //    defer hw.deinit();
-    //
-    //    for (hw.playbacks) |port| {
-    //        std.debug.print("{any}", .{port});
-    //    }
-    //
-    //    for (hw.captures) |port| {
-    //        std.debug.print("{any}", .{port});
-    //    }
 }
 
 test {
