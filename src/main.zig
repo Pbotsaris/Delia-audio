@@ -25,6 +25,8 @@ const log = std.log.scoped(.main);
 //     try e.deinit();
 // }
 pub fn main() !void {
+    backends.jack.examples.testJack();
+
     //    examplePlaybackAndGraph() catch |err| {
     //        log.err("Failed to run example: {!}", .{err});
     //    };

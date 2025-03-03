@@ -1,12 +1,11 @@
 const std = @import("std");
-
-const Client = @import("client.zig").JackClient;
-
 const log = std.log.scoped(.jack);
 
 const c_jack = @cImport({
     @cInclude("jack/jack.h");
 });
+
+const Client = @import("client.zig").JackClient;
 
 const JackHardwareError = error{
     no_ports_found,
@@ -30,14 +29,14 @@ allocator: std.mem.Allocator,
 
 const Self = @This();
 
-pub fn init(allocator: std.mem.Allocator, client: Client) !Self {
+pub fn init(allocator: std.mem.Allocator, client: *c_jack.jack_client_t) !Self {
     const pb_flags = c_jack.JackPortIsPhysical | c_jack.JackPortIsInput;
     const cap_flags = c_jack.JackPortIsPhysical | c_jack.JackPortIsOutput;
 
     return .{
         .allocator = allocator,
-        .playbacks = try getPortsAlloc(allocator, client.client, pb_flags),
-        .captures = try getPortsAlloc(allocator, client.client, cap_flags),
+        .playbacks = try getPortsAlloc(allocator, client, pb_flags),
+        .captures = try getPortsAlloc(allocator, client, cap_flags),
     };
 }
 
