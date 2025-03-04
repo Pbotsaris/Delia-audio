@@ -75,7 +75,7 @@ pub const Example = struct {
 
         for (iterations) |_| {
             ctx.scheduler.processGraph() catch |err| {
-                log.err("Failed to process data: {any}", .{err});
+                log.err("Failed to process data: {!}", .{err});
                 return;
             };
 
@@ -86,7 +86,7 @@ pub const Example = struct {
             };
 
             data.write(audio_buffer.buffer) catch |err| {
-                log.err("Failed to write data: {any}", .{err});
+                log.err("Failed to write data: {!}", .{err});
                 return;
             };
 

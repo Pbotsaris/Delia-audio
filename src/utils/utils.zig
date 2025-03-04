@@ -5,6 +5,13 @@ const PatternOptions = struct {
     case_sensitive: bool = true,
 };
 
+/// Searches for the first occurrence of `needle` in `haystack`.
+///
+/// Returns:
+/// - The starting index of the first match if found.
+/// - `null` if `needle` is empty, longer than `haystack`, or no match is found.
+///
+/// Case sensitivity is controlled by `opts.case_sensitive`.
 pub fn findPattern(haystack: []const u8, needle: []const u8, opts: PatternOptions) ?usize {
     if (needle.len == 0 or needle.len > haystack.len) return null;
 

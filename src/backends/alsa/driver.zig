@@ -609,8 +609,6 @@ const FullDuplexDeviceOptions = struct {
 pub fn FullDuplexDevice(ContextType: type, comptime comptime_opts: DeviceComptimeOptions) type {
     const T = comptime_opts.format.ToType();
 
-    // todo implement FullDuplexAudioLoop
-
     return struct {
         pub fn AudioDataType() type {
             return *GenericAudioData(comptime_opts.format);
