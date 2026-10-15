@@ -35,14 +35,42 @@ const Alsa = struct {
         mod.addIncludePath(b.path(b.pathJoin(&.{ src_dir, include_dir })));
         mod.addObjectFile(b.path(b.pathJoin(&.{ src_dir, lib_path })));
         mod.link_libc = true;
+
+        // NOTE TO SELF:
+        // Statically linked, alsa-lib locates its plugin dir (`default` -> pipewire, pulse, ...)
+        // with `dlinfo(RTLD_DI_ORIGIN)` on the object that contains it, which is now our executable. 
+        // glibc only computes the main executable's origin when it has to expand `$ORIGIN` in its rpath; 
+        // otherwise `dlinfo` dereferences NULL (glibc 2.44). The rpath entry itself is harmless: nothing is dlopened from next to the binary.
+        mod.addRPathSpecial("$ORIGIN");
+    }
+};
+
+/// Platform audio backends. Each one is a module `core/backends/<name>` rooted at
+/// `src/core/backends/<name>/root.zig`, built only on the targets it supports, and exposed to
+/// the source as `@import("build_options").<name>` so code can skip what was not built.
+const Backend = enum {
+    alsa,
+
+    fn supports(backend: Backend, os: std.Target.Os.Tag) bool {
+        return switch (backend) {
+            .alsa => os == .linux,
+        };
+    }
+
+    /// Vendored builds, system libraries and frameworks: whatever the module needs to link.
+    fn link(backend: Backend, b: *std.Build, mod: *std.Build.Module) void {
+        switch (backend) {
+            .alsa => {
+                Alsa.install(b);
+                Alsa.link(b, mod);
+            },
+        }
     }
 };
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-
-    Alsa.install(b);
 
     ////////////////////////// MODULES ///////////////////////////////////////////
     // One named module per subsystem so files import `@import("core/buffer")` rather than
@@ -93,16 +121,6 @@ pub fn build(b: *std.Build) void {
     graph.addImport("core/buffer", buffer);
     graph.addImport("core/common", common);
 
-    const alsa = b.createModule(.{
-        .root_source_file = b.path("src/core/backends/alsa/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    alsa.addImport("core/buffer", buffer);
-    alsa.addImport("core/common", common);
-    alsa.addImport("dsp", dsp);
-    Alsa.link(b, alsa);
-
     // One root module shared by the executable, the compile-only check, and the tests.
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -110,22 +128,51 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const modules = [_]Named{
+    // An ArrayList, not an array: which backends are built depends on the target, which is
+    // only known at runtime here.
+    var modules: std.ArrayList(Named) = .empty;
+    modules.appendSlice(b.allocator, &.{
         .{ .name = "core/buffer", .mod = buffer },
         .{ .name = "core/common", .mod = common },
         .{ .name = "core/graph", .mod = graph },
-        .{ .name = "core/backends/alsa", .mod = alsa },
         .{ .name = "utils", .mod = utils },
         .{ .name = "dsp", .mod = dsp },
-    };
+    }) catch @panic("OOM");
 
-    for (modules) |m| root.addImport(m.name, m.mod);
+    ////////////////////////// BACKENDS //////////////////////////////////////////
+    // `build_options.<name>` is true when the backend's module was built for this target.
+
+    const build_options = b.addOptions();
+
+    for (std.enums.values(Backend)) |backend| {
+        const name = @tagName(backend);
+        const enabled = backend.supports(target.result.os.tag);
+
+        build_options.addOption(bool, name, enabled);
+        if (!enabled) continue;
+
+        const mod = b.createModule(.{
+            .root_source_file = b.path(b.fmt("src/core/backends/{s}/root.zig", .{name})),
+            .target = target,
+            .optimize = optimize,
+        });
+        mod.addImport("core/buffer", buffer);
+        mod.addImport("core/common", common);
+        mod.addImport("dsp", dsp);
+        backend.link(b, mod);
+
+        modules.append(b.allocator, .{ .name = b.fmt("core/backends/{s}", .{name}), .mod = mod }) catch @panic("OOM");
+    }
+
+    for (modules.items) |m| root.addImport(m.name, m.mod);
+    root.addOptions("build_options", build_options);
 
     ////////////////////////// BUILD / RUN ///////////////////////////////////////
     const exe = b.addExecutable(.{
         .name = "delia",
         .root_module = root,
     });
+
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -147,6 +194,33 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Check if the app and all tests compile");
     check.dependOn(&exe_check.step);
 
+    ////////////////////////// Examples /////////////////////////
+    // run the module examples and `src/examples.zig`  with `zig build example -- module <name> [args...]`
+    // where `src/example.zig` module is called 'root'.
+    // ex: zig build example -- alsa playback-sine hw:0 5
+
+    const example_mod = b.createModule(.{
+        .root_source_file = b.path("src/examples_main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const example_exe = b.addExecutable(.{
+        .name = "delia_example",
+        .root_module = example_mod,
+    });
+
+    for (modules.items) |mod| example_mod.addImport(mod.name, mod.mod);
+    example_mod.addOptions("build_options", build_options);
+
+    check.dependOn(&example_exe.step);
+
+    const example_run_cmd = b.addRunArtifact(example_exe);
+    if (b.args) |args| example_run_cmd.addArgs(args);
+
+    const examples_step = b.step("example", "Run module example: zig build example -- module <name> [args...]");
+    examples_step.dependOn(&example_run_cmd.step);
+
     ////////////////////////// TESTS /////////////////////////////////////////////
 
     const test_filters = b.option(
@@ -159,9 +233,10 @@ pub fn build(b: *std.Build) void {
 
     // One test binary per module, root included; the runner would otherwise only see
     // tests in main.zig's own files.
-    const test_roots = modules ++ [_]Named{.{ .name = "root", .mod = root }};
+    // Appended after EXAMPLES so the examples exe does not import `root`.
+    modules.append(b.allocator, .{ .name = "root", .mod = root }) catch @panic("OOM");
 
-    for (test_roots) |m| {
+    for (modules.items) |m| {
         const file_name = std.mem.replaceOwned(u8, b.allocator, m.name, "/", "_") catch @panic("OOM");
         const unit_tests = b.addTest(.{
             .name = b.fmt("test_{s}", .{file_name}),

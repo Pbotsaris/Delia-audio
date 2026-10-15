@@ -4,7 +4,8 @@ const graph = @import("core/graph");
 const audio_specs = @import("core/common").audio_specs;
 const ex = @import("examples.zig");
 
-const alsa = @import("core/backends/alsa");
+const build_options = @import("build_options");
+const alsa = if (build_options.alsa) @import("core/backends/alsa") else struct {};
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
@@ -14,7 +15,6 @@ pub const std_options: std.Options = .{
 const log = std.log.scoped(.main);
 
 pub fn main() !void {
-    graph.examples.offlineFanIn();
 }
 
 test {

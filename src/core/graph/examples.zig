@@ -5,58 +5,26 @@
 const std = @import("std");
 const buffer = @import("core/buffer");
 const specs = @import("core/common").audio_specs;
+const examples = @import("core/common").examples;
 const nodes = @import("nodes/root.zig");
 
 const GraphBuilder = @import("builder.zig").GraphBuilder;
 const Compiler = @import("compiler.zig").Compiler;
 const ExecutionPlan = @import("plan.zig").ExecutionPlan;
 
-const log = std.log.scoped(.graph);
 
-/// Renders `frame_count` frames in blocks of at most `plan.max_frames` and returns them as
-/// packed interleaved samples, which is what a device or a file expects. The caller owns the
-/// result. The last block is partial when `frame_count` is not a multiple of the block size.
-pub fn renderInterleavedAlloc(comptime T: type, allocator: std.mem.Allocator, plan: *ExecutionPlan(T), frame_count: usize) ![]T {
-    const max_frames = plan.max_frames.toUsize();
-    const channel_count = plan.channel_count;
+/// Runnable from `zig build example -- graph <name> [args...]`.
+pub const commands = [_]examples.Command{
+    .{ .name = "offline-fan-in", .usage = "", .run = runOfflineFanIn },
+};
 
-    const interleaved = try allocator.alloc(T, frame_count * channel_count);
-    errdefer allocator.free(interleaved);
-
-    // planar scratch for one block; the plan copies its output here
-    var planar = try buffer.OwnedAudioBuffer(T).init(allocator, .{ .channel_count = channel_count, .max_frames = max_frames });
-    defer planar.deinit(allocator);
-
-    var first_frame: usize = 0;
-
-    while (first_frame < frame_count) {
-        const frames = @min(max_frames, frame_count - first_frame);
-        const block = try planar.borrowBlock(frames);
-
-        try plan.render(block);
-
-        // we are using just a plain buffer here b ut the idea is that will be a more efficient interleaver in the future, and we want to test the interface
-        const dst = interleaved[first_frame * channel_count ..][0 .. frames * channel_count];
-        try buffer.interleave(T, dst, block.asConst());
-
-        first_frame += frames;
-    }
-
-    return interleaved;
-}
-
-/// `renderInterleavedAlloc` for a duration. The frame count is `seconds * plan.sample_rate`
-/// rounded to the nearest frame; negative or non-finite durations are `invalid_duration`.
-pub fn renderSecondsInterleavedAlloc(comptime T: type, allocator: std.mem.Allocator, plan: *ExecutionPlan(T), seconds: T) ![]T {
-    if (!std.math.isFinite(seconds) or seconds < 0) return error.invalid_duration;
-
-    const frame_count: usize = @intFromFloat(@round(seconds * plan.sample_rate));
-    return renderInterleavedAlloc(T, allocator, plan, frame_count);
+fn runOfflineFanIn(_: []const [:0]const u8) anyerror!void {
+    offlineFanIn();
 }
 
 /// Oscillator(440 Hz) -> Gain(0.25) and Gain(0.5), both mixed into the output: one second of
 /// stereo audio at 48 kHz, rendered offline.
-pub fn offlineFanIn() void {
+fn offlineFanIn() void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
 
@@ -105,6 +73,49 @@ fn renderFanIn(allocator: std.mem.Allocator) !void {
         plan.pool.slot_count,
         peak,
     });
+}
+
+const log = std.log.scoped(.graph);
+
+/// Renders `frame_count` frames in blocks of at most `plan.max_frames` and returns them as
+/// packed interleaved samples, which is what a device or a file expects. The caller owns the
+/// result. The last block is partial when `frame_count` is not a multiple of the block size.
+fn renderInterleavedAlloc(comptime T: type, allocator: std.mem.Allocator, plan: *ExecutionPlan(T), frame_count: usize) ![]T {
+    const max_frames = plan.max_frames.toUsize();
+    const channel_count = plan.channel_count;
+
+    const interleaved = try allocator.alloc(T, frame_count * channel_count);
+    errdefer allocator.free(interleaved);
+
+    // planar scratch for one block; the plan copies its output here
+    var planar = try buffer.OwnedAudioBuffer(T).init(allocator, .{ .channel_count = channel_count, .max_frames = max_frames });
+    defer planar.deinit(allocator);
+
+    var first_frame: usize = 0;
+
+    while (first_frame < frame_count) {
+        const frames = @min(max_frames, frame_count - first_frame);
+        const block = try planar.borrowBlock(frames);
+
+        try plan.render(block);
+
+        // we are using just a plain buffer here b ut the idea is that will be a more efficient interleaver in the future, and we want to test the interface
+        const dst = interleaved[first_frame * channel_count ..][0 .. frames * channel_count];
+        try buffer.interleave(T, dst, block.asConst());
+
+        first_frame += frames;
+    }
+
+    return interleaved;
+}
+
+/// `renderInterleavedAlloc` for a duration. The frame count is `seconds * plan.sample_rate`
+/// rounded to the nearest frame; negative or non-finite durations are `invalid_duration`.
+fn renderSecondsInterleavedAlloc(comptime T: type, allocator: std.mem.Allocator, plan: *ExecutionPlan(T), seconds: T) ![]T {
+    if (!std.math.isFinite(seconds) or seconds < 0) return error.invalid_duration;
+
+    const frame_count: usize = @intFromFloat(@round(seconds * plan.sample_rate));
+    return renderInterleavedAlloc(T, allocator, plan, frame_count);
 }
 
 const testing = std.testing;

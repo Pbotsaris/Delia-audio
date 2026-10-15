@@ -1,4 +1,4 @@
-//! Backend-only examples: a device, a Ctx and a callback, no graph. 
+//! Backend-only examples: a device, a Ctx and a callback, no graph.
 //! after a run; opening `null` versus `hw:` and comparing `negotiated` with the request.
 //! Graph playback lives in `src/examples.zig`.
 const std = @import("std");
@@ -6,11 +6,24 @@ const buffer = @import("core/buffer");
 const device = @import("device.zig");
 const dsp = @import("dsp");
 const SampleRate = @import("core/common").audio_specs.SampleRate;
+const examples = @import("core/common").examples;
 
 const log = std.log.scoped(.alsa);
 const Wave = dsp.waves.Wave(f32);
 
 const requested_rate: SampleRate = .sr_48000;
+
+/// Runnable from `zig build example -- alsa <name> [args...]`.
+pub const commands = [_]examples.Command{
+    .{ .name = "playback-sine", .usage = "[ident=default] [seconds=2]", .run = runPlaybackSine },
+};
+
+pub fn runPlaybackSine(args: []const [:0]const u8) anyerror!void {
+    const ident: [:0]const u8 = if (args.len > 0) args[0] else "default";
+    const secs: f32 = if (args.len > 1) try std.fmt.parseFloat(f32, args[1]) else 2.0;
+
+    try playbackSine(ident, secs);
+}
 
 /// Everything the callback needs, owned by the caller. The device only sees `*SineContext`.
 const SineContext = struct {
@@ -19,7 +32,6 @@ const SineContext = struct {
     device: *Device,
 
     fn render(self: *SineContext, out: buffer.AudioBlock(f32)) void {
-
         const first_block = self.wave.sine(out.getSamples(0));
 
         // copy the first channel to all other channels
@@ -34,7 +46,7 @@ const SineContext = struct {
 const Device = device.PlaybackDevice(SineContext, .s16_le);
 
 /// Plays a 440 Hz sine for `seconds` on `ident` and logs what the device did.
-pub fn playbackSine(ident: [:0]const u8, seconds: f32) !void {
+fn playbackSine(ident: [:0]const u8, seconds: f32) !void {
     const allocator = std.heap.page_allocator;
 
     var dev = try Device.init(.{
@@ -43,7 +55,7 @@ pub fn playbackSine(ident: [:0]const u8, seconds: f32) !void {
         .channel_count = 2,
         .period_frames = 512,
     });
-        
+
     defer dev.deinit(allocator);
 
     // the config the hardware agreed to. Must be a supported by core/common/audio_specs.zig
