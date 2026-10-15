@@ -46,7 +46,7 @@ Every subsystem is a named module declared in `build.zig`, and files import acro
 | `core/buffer` | `src/core/buffer/root.zig` | — |
 | `core/common` | `src/core/common/root.zig` (`audio_specs`) | — |
 | `core/graph` | `src/core/graph/root.zig` | `core/buffer`, `core/common` |
-| `core/backends/alsa` | `src/core/backends/alsa/root.zig` | `core/buffer` (+ ALSA) |
+| `core/backends/alsa` | `src/core/backends/alsa/root.zig` | `core/buffer`, `core/common`, `dsp` (examples only) (+ ALSA) |
 | `utils` | `src/utils/root.zig` | — |
 | `dsp` | `src/dsp/dsp.zig` | `core/common` |
 | root | `src/main.zig` | all of the above |
@@ -94,7 +94,7 @@ core/common/      audio_specs (BufferSize/BlockSize/SampleRate enums)
 
 Four files under `src/core/backends/alsa/` (details in its `README.md`), imported through the `core/backends/alsa` module as `alsa.device`, `.loop`, `.pcm`, `.convert`:
 
-- `device.zig`: `PlaybackDevice(Ctx, fmt)` is generic over the caller's context struct and a comptime `SampleFormat`. `init(DeviceOptions)` opens and negotiates hw params (MMAP interleaved only; a moved period or buffer is `period_changed`, a moved rate is reported in `negotiated`). `prepare(allocator)` applies sw params, validates the mmap area geometry once, and allocates the staging buffer. `start(ctx, callback)` runs the loop on the calling thread until `stop()` (callable from another thread) or an unrecoverable error; `deinit(allocator)` after stop.
+- `device.zig`: `PlaybackDevice(Ctx, fmt)` is generic over the caller's context struct and a comptime `SampleFormat`. `init(DeviceOptions)` opens and negotiates hw params (MMAP interleaved only; a moved period or buffer is `period_changed`). Rates are `SampleRate` enums on both sides: a rate moved to another listed one is reported in `negotiatedConfig()` (a copy), an unlisted one is `rate_unsupported`. `prepare(allocator)` applies sw params, validates the mmap area geometry once, and allocates the staging buffer. `start(ctx, callback)` runs the loop on the calling thread until `stop()` (callable from another thread) or an unrecoverable error; `deinit(allocator)` after stop.
 - `loop.zig`: `PlaybackLoop(Ctx, Pcm, fmt)` is the transfer policy, generic over the `Pcm` seam so tests drive it with a scripted PCM. Callback is `fn (ctx: *Ctx, out: AudioBlock(f32)) void` with `0 < frame_count <= period_frames`; the callback writes every frame and never allocates, locks, logs or waits. Counters live in `Stats`; the loop never prints. `availUpdate` runs before every `begin`; a short commit ends the period without recovery; whether to start the stream is read from `pcm.state()`, never tracked. `stop()` sets `stop_requested`, `running` is written only by `start`. The scripted tests here (one per contract section 4 rule; `gap:` ones were written against M4a bugs) must keep passing.
 - `pcm.zig`: `Alsa` is the thin seam over `snd_pcm_*` and holds the module's **only** `@cImport` (`pcm.c`); a second one would yield an incompatible opaque `snd_pcm_t`. Negative ALSA results become `PcmError` and `snd_pcm_state_t` becomes `State` here, nowhere else; no alsa-lib type crosses the seam. `ScriptedPcm` (same file, test-only) is the double the loop tests run on: scripted outcomes, call log, ALSA-like avail model, fixed wire.
 - `convert.zig`: `SampleConverter(fmt)` encodes/decodes device bytes to and from planar `f32` blocks in one pass; integer encode clamps before scaling.

@@ -1,5 +1,6 @@
 const std = @import("std");
 const buffer = @import("core/buffer");
+const SampleRate = @import("core/common").audio_specs.SampleRate;
 const c = @import("pcm.zig").c;
 
 const SampleFormat = @import("convert.zig").SampleFormat;
@@ -17,7 +18,7 @@ pub const DeviceError = error{
     sw_params_invalid,
     access_unsupported, // only MMAP_INTERLEAVED for now
     format_unsupported,
-    rate_unsupported,
+    rate_unsupported, // the hardware refused the rate, or negotiated one that is not a `SampleRate`
     channels_unsupported,
     period_changed, // the hardware moved period or buffer size away from the request
     not_prepared, // start() before prepare()
@@ -27,7 +28,7 @@ const RealtimeError = DeviceError || LoopError;
 
 pub const DeviceOptions = struct {
     ident: [:0]const u8 = "default",
-    sample_rate: u32,
+    sample_rate: SampleRate,
     channel_count: u32,
     period_frames: usize,
     n_periods: u32 = 2,
@@ -36,7 +37,7 @@ pub const DeviceOptions = struct {
 
 /// What the hardware actually agreed to. The plan is compiled against these, not the request.
 pub const NegotiatedConfig = struct {
-    sample_rate: u32,
+    sample_rate: SampleRate, // may differ from the request, but is always a listed rate
     channel_count: u32,
     period_frames: usize,
     buffer_frames: usize,
@@ -84,7 +85,7 @@ pub fn PlaybackDevice(comptime Ctx: type, comptime fmt: SampleFormat) type {
             if (c.snd_pcm_hw_params_set_format(handle, params, alsa_format) < 0) return DeviceError.format_unsupported;
             if (c.snd_pcm_hw_params_set_channels(handle, params, opts.channel_count) < 0) return DeviceError.channels_unsupported;
 
-            var rate: c_uint = opts.sample_rate;
+            var rate: c_uint = @intCast(opts.sample_rate.toUsize());
             var dir: c_int = 0;
             if (c.snd_pcm_hw_params_set_rate_near(handle, params, &rate, &dir) < 0) return DeviceError.rate_unsupported;
 
@@ -101,12 +102,15 @@ pub fn PlaybackDevice(comptime Ctx: type, comptime fmt: SampleFormat) type {
             if (c.snd_pcm_hw_params_get_rate(params, &rate, &dir) < 0) return DeviceError.hw_params_invalid;
 
             // the period is the loop's unit and the staging capacity: a different one is an error.
-            // A different rate is not: the caller compiles the plan against `negotiated.sample_rate`.
             if (period != opts.period_frames or buffer_frames != opts.period_frames * opts.n_periods) return DeviceError.period_changed;
+
+            // A different listed rate is not an error: the caller builds its DSP against
+            // `negotiatedConfig().sample_rate`. An unlisted one (some cards answer 44056) is.
+            const negotiated_rate = std.enums.fromInt(SampleRate, rate) orelse return DeviceError.rate_unsupported;
 
             return .{
                 .handle = handle,
-                .config = .{ .sample_rate = rate, .channel_count = opts.channel_count, .period_frames = period, .buffer_frames = buffer_frames },
+                .config = .{ .sample_rate = negotiated_rate, .channel_count = opts.channel_count, .period_frames = period, .buffer_frames = buffer_frames },
                 .timeout_ms = opts.timeout_ms,
                 .pcm = .{ .handle = handle, .bytes_per_frame = opts.channel_count * Converter.bytes_per_sample },
             };
@@ -217,7 +221,7 @@ const NullCtx = struct {
 };
 
 const NullDevice = PlaybackDevice(NullCtx, .s16_le);
-const null_options: DeviceOptions = .{ .ident = "null", .sample_rate = 48000, .channel_count = 2, .period_frames = 512 };
+const null_options: DeviceOptions = .{ .ident = "null", .sample_rate = .sr_48000, .channel_count = 2, .period_frames = 512 };
 
 test "PlaybackDevice renders periods on the null device" {
     var device = try NullDevice.init(null_options);
@@ -291,4 +295,13 @@ test "PlaybackDevice: start() again after stop() renders again (stop is consumed
 
     try std.testing.expect(ctx.frames >= first + 2 * 512);
     try std.testing.expectEqual(0, device.getStats().xruns);
+}
+
+test "PlaybackDevice: the negotiated rate is a SampleRate" {
+    // `null` accepts any rate, so the request comes back unchanged. The unlisted-rate rejection
+    // (`rate_unsupported` from `std.enums.fromInt`) needs a card that moves the rate.
+    var device = try NullDevice.init(.{ .ident = "null", .sample_rate = .sr_44100, .channel_count = 2, .period_frames = 512 });
+    defer device.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(SampleRate.sr_44100, device.negotiatedConfig().sample_rate);
 }

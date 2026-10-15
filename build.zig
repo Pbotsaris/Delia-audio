@@ -99,6 +99,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     alsa.addImport("core/buffer", buffer);
+    alsa.addImport("core/common", common);
     alsa.addImport("dsp", dsp);
     Alsa.link(b, alsa);
 

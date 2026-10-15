@@ -5,11 +5,12 @@ const std = @import("std");
 const buffer = @import("core/buffer");
 const device = @import("device.zig");
 const dsp = @import("dsp");
+const SampleRate = @import("core/common").audio_specs.SampleRate;
 
 const log = std.log.scoped(.alsa);
 const Wave = dsp.waves.Wave(f32);
 
-const sample_rate: u32 = 48000;
+const requested_rate: SampleRate = .sr_48000;
 
 /// Everything the callback needs, owned by the caller. The device only sees `*SineContext`.
 const SineContext = struct {
@@ -38,19 +39,24 @@ pub fn playbackSine(ident: [:0]const u8, seconds: f32) !void {
 
     var dev = try Device.init(.{
         .ident = ident,
-        .sample_rate = sample_rate,
+        .sample_rate = requested_rate,
         .channel_count = 2,
         .period_frames = 512,
     });
+        
     defer dev.deinit(allocator);
 
-    // the rate the hardware agreed to, not the one asked for: the wave's increment depends on it
+    // the config the hardware agreed to. Must be a supported by core/common/audio_specs.zig
     const config = dev.negotiatedConfig();
 
-    if (config.sample_rate != sample_rate) log.warn("asked for 48000 Hz, got {d}", .{config.sample_rate});
+    const sample_rate = config.sample_rate.toFloat(f32);
+
+    if (config.sample_rate != requested_rate) {
+        log.warn("asked for {d} Hz, got {d}", .{ requested_rate.toUsize(), config.sample_rate.toUsize() });
+    }
 
     var ctx = SineContext{
-        .wave = Wave.init(440, 0.2, @floatFromInt(sample_rate)), // (freq, amp, sample rate)
+        .wave = Wave.init(440, 0.2, sample_rate), // (freq, amp, sample rate)
         .frames_left = @intFromFloat(seconds * sample_rate),
         .device = &dev,
     };
@@ -59,6 +65,7 @@ pub fn playbackSine(ident: [:0]const u8, seconds: f32) !void {
     try dev.start(&ctx, SineContext.render); // blocks until render calls stop()
 
     const stats = dev.getStats();
+
     log.info("{d} periods, {d} blocks, {d} xruns, {d} discontinuities", .{
         stats.periods, stats.blocks, stats.xruns, stats.discontinuities,
     });

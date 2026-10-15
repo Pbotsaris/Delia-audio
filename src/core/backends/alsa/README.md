@@ -47,7 +47,7 @@ const Device = alsa.device.PlaybackDevice(Ctx, .s16_le);
 
 var device = try Device.init(.{
     .ident = "hw:0,0",
-    .sample_rate = 48000,
+    .sample_rate = .sr_48000,        // a `SampleRate` (core/common audio_specs)
     .channel_count = 2,
     .period_frames = 512,
     .n_periods = 2,
@@ -55,7 +55,8 @@ var device = try Device.init(.{
 defer device.deinit(allocator);
 
 try device.prepare(allocator);
-// device.negotiated holds the rate the hardware actually agreed to; use it, not the request
+// the rate the hardware agreed to (a `SampleRate`, maybe not the one asked for); build DSP on it
+const rate = device.negotiatedConfig().sample_rate.toFloat(f32);
 
 var ctx = Ctx{};
 try device.start(&ctx, Ctx.callback); // blocks until device.stop() or an unrecoverable error
@@ -84,15 +85,19 @@ Callback rules:
 1. access `MMAP_INTERLEAVED` (anything else fails with `access_unsupported`)
 2. format from the comptime `SampleFormat` (`S16_LE` or `FLOAT_LE`)
 3. channels, exact
-4. rate with `set_rate_near`
+4. rate with `set_rate_near`, from the requested `SampleRate`
 5. period size with `set_period_size_near`, buffer size with `set_buffer_size_near`
    (`period_frames * n_periods`)
 6. `snd_pcm_hw_params` to apply, then read everything back
 
 The period is the loop's unit and the staging buffer's capacity, so if the hardware moved
-period or buffer size the device fails with `period_changed`. A moved rate is not an error: it
-is reported in `device.negotiated.sample_rate`, and whatever renders audio must be configured
-against that value. alsa-lib's `hw_params` struct is freed before `init` returns; only the
+period or buffer size the device fails with `period_changed`. A rate moved to another listed
+`SampleRate` (ask for 48000, get 44100) is not an error: it is reported in
+`negotiatedConfig().sample_rate`, and whatever renders audio must be configured against that
+value. A rate that is not a `SampleRate` (some cards answer 44056 to `set_rate_near`) fails
+with `rate_unsupported`: the raw integer is converted once, with `std.enums.fromInt`, and never
+leaves `init`. `negotiatedConfig()` returns a copy; `prepare` reads the stored one, so callers
+cannot change what it uses. alsa-lib's `hw_params` struct is freed before `init` returns; only the
 negotiated numbers are kept.
 
 ### `prepare`: software parameters, geometry, staging

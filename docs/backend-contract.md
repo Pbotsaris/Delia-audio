@@ -103,6 +103,15 @@ Everything negotiated or allocated happens in `init`/`prepare`, before `start`.
   stream's channels; the plan's `sample_rate` equals the negotiated rate (ALSA may change the
   requested rate; read it back); `period_frames * n_periods` equals the hardware buffer that was
   actually set. A `shape_mismatch` from `render` inside the callback is a bug in this section.
+- **Rates are `SampleRate`s** (`core/common` `audio_specs`) on both sides. The request is one,
+  so only listed rates can be asked for. The hardware may answer with a different rate; a
+  different listed one is reported in `negotiatedConfig().sample_rate` and the caller builds
+  its DSP on it, an unlisted one fails `init` with `rate_unsupported` (plan 3.3: one clock
+  domain, unsupported configs rejected explicitly). The raw ALSA integer is converted once in
+  `init` with `std.enums.fromInt` (never `@enumFromInt`, which is checked UB on an unlisted
+  value) and does not leave it. Supporting a new rate is a new enum tag.
+- `negotiatedConfig()` returns a copy. `prepare` sizes sw params and staging from the device's
+  own stored config, so nothing a caller does to the copy changes them.
 - MMAP area geometry (`first`, `step`, bytes per sample) is validated once here against the
   negotiated format. The loop trusts it.
 - `timeout` for `snd_pcm_wait` is finite. Infinite waits make `stop()` unobservable.

@@ -4,7 +4,7 @@
 //!
 //! Shape of it: a Ctx struct owns the plan and a pool slot sized `plan.max_frames`; its
 //! callback sub-blocks `out` into graph blocks and calls `plan.render` on each. The plan is
-//! compiled against `device.negotiated.sample_rate`, not the requested rate.
+//! compiled against `device.negotiatedConfig().sample_rate.toFloat(f32)`, not the requested rate.
 const std = @import("std");
 const graph = @import("core/graph");
 const alsa = @import("core/backends/alsa");
