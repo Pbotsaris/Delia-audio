@@ -8,7 +8,7 @@ implementation. It uses older names (`BlockError`, `block()`, `slot()`); the cod
 
 | File | Contents |
 |---|---|
-| `root.zig` | public surface and tests; root of the `buffer` module, the only file other modules import |
+| `root.zig` | public surface and tests; root of the `core/buffer` module, the only file other modules import |
 | `block.zig` | `AudioBlock`, `ConstAudioBlock` |
 | `storage.zig` | `OwnedAudioBuffer`, `AudioBufferPool` |
 | `ops.zig` | `clear`, `copy`, `accumulate`, `interleave`, `deinterleave`, `blocksOverlap` |

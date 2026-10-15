@@ -1,5 +1,5 @@
 const std = @import("std");
-const buffer = @import("buffer");
+const buffer = @import("core/buffer");
 const c = @import("pcm.zig").c;
 
 const SampleFormat = @import("convert.zig").SampleFormat;
@@ -7,7 +7,7 @@ const SampleConverter = @import("convert.zig").SampleConverter;
 const PlaybackLoop = @import("loop.zig").PlaybackLoop;
 const LoopError = @import("loop.zig").LoopError;
 const LoopStats = @import("loop.zig").Stats;
-const AlsaPcm = @import("pcm.zig").AlsaPcm;
+const AlsaPcm = @import("pcm.zig").Alsa;
 
 pub const DeviceError = error{
     open_failed,
@@ -22,8 +22,8 @@ pub const DeviceError = error{
     period_changed, // the hardware moved period or buffer size away from the request
     not_prepared, // start() before prepare()
 } || std.mem.Allocator.Error;
-
 const RealtimeError = DeviceError || LoopError;
+
 
 pub const DeviceOptions = struct {
     ident: [:0]const u8 = "default",
@@ -55,7 +55,7 @@ pub fn PlaybackDevice(comptime Ctx: type, comptime fmt: SampleFormat) type {
         };
 
         handle: *c.snd_pcm_t,
-        negotiated: NegotiatedConfig,
+        config: NegotiatedConfig,
         timeout_ms: u32,
         pcm: AlsaPcm,
         loop: ?Loop = null, // set by prepare
@@ -106,10 +106,14 @@ pub fn PlaybackDevice(comptime Ctx: type, comptime fmt: SampleFormat) type {
 
             return .{
                 .handle = handle,
-                .negotiated = .{ .sample_rate = rate, .channel_count = opts.channel_count, .period_frames = period, .buffer_frames = buffer_frames },
+                .config = .{ .sample_rate = rate, .channel_count = opts.channel_count, .period_frames = period, .buffer_frames = buffer_frames },
                 .timeout_ms = opts.timeout_ms,
                 .pcm = .{ .handle = handle, .bytes_per_frame = opts.channel_count * Converter.bytes_per_sample },
             };
+        }
+
+        pub fn negotiatedConfig(self: *const Self) NegotiatedConfig {
+            return self.config;
         }
 
         pub fn prepare(self: *Self, allocator: std.mem.Allocator) DeviceError!void {
@@ -124,7 +128,7 @@ pub fn PlaybackDevice(comptime Ctx: type, comptime fmt: SampleFormat) type {
             const sw = maybe_sw orelse return DeviceError.sw_params_invalid;
             defer c.snd_pcm_sw_params_free(sw);
 
-            const neg = self.negotiated;
+            const neg = self.config;
 
             if (c.snd_pcm_sw_params_current(self.handle, sw) < 0) return DeviceError.sw_params_invalid;
 
@@ -192,32 +196,99 @@ test "PlaybackDevice instantiates" {
 }
 
 // The whole open/negotiate/prepare/render/stop/close path on ALSA's `null` plugin, which every
-// machine with alsa-lib has. It accepts any format and geometry, so this checks the plumbing,
-// not the hardware negotiation.
+// machine with alsa-lib has. It accepts any format and geometry, so these check the plumbing
+// through the real `Alsa` seam (state, start, wait, begin/commit), not hardware timing: `null`
+// consumes frames as fast as they are committed. Timing is the `hw:` run in src/examples.zig.
+
+/// Stops the device itself after `stop_after` frames (0: never, something else stops it).
+const NullCtx = struct {
+    calls: usize = 0,
+    frames: usize = 0,
+    stop_after: usize = 0,
+    device: *PlaybackDevice(NullCtx, .s16_le) = undefined,
+
+    fn cb(self: *NullCtx, out: buffer.AudioBlock(f32)) void {
+        self.calls += 1;
+        // atomic: a stopper thread polls `frames` (only this thread writes it)
+        @atomicStore(usize, &self.frames, self.frames + out.frame_count, .release);
+        for (0..out.channel_count) |ch| @memset(out.getSamples(ch), 0.25);
+        if (self.stop_after > 0 and self.frames >= self.stop_after) self.device.stop();
+    }
+};
+
+const NullDevice = PlaybackDevice(NullCtx, .s16_le);
+const null_options: DeviceOptions = .{ .ident = "null", .sample_rate = 48000, .channel_count = 2, .period_frames = 512 };
+
 test "PlaybackDevice renders periods on the null device" {
-    const Ctx = struct {
-        const Self = @This();
-        calls: usize = 0,
-        frames: usize = 0,
-        device: *PlaybackDevice(Self, .s16_le) = undefined,
-
-        fn cb(self: *Self, out: buffer.AudioBlock(f32)) void {
-            self.calls += 1;
-            self.frames += out.frame_count;
-            for (0..out.channel_count) |ch| @memset(out.channel(ch), 0.25);
-            if (self.frames >= 4 * 512) self.device.stop();
-        }
-    };
-    const Device = PlaybackDevice(Ctx, .s16_le);
-
-    var device = try Device.init(.{ .ident = "null", .sample_rate = 48000, .channel_count = 2, .period_frames = 512 });
+    var device = try NullDevice.init(null_options);
     defer device.deinit(std.testing.allocator);
     try device.prepare(std.testing.allocator);
 
-    var ctx = Ctx{ .device = &device };
-    try device.start(&ctx, Ctx.cb);
+    // prepare leaves the stream prepared; the loop, not the start threshold, starts it
+    try std.testing.expectEqual(.prepared, device.pcm.state());
 
-    try std.testing.expect(ctx.calls > 0);
+    var ctx = NullCtx{ .device = &device, .stop_after = 4 * 512 };
+    try device.start(&ctx, NullCtx.cb);
+
+    try std.testing.expectEqual(.running, device.pcm.state());
     try std.testing.expect(ctx.frames >= 4 * 512);
+
+    const stats = device.getStats();
+    try std.testing.expectEqual(ctx.calls, stats.blocks);
+    try std.testing.expectEqual(0, stats.xruns);
+    try std.testing.expectEqual(0, stats.discontinuities);
+    try std.testing.expectEqual(0, stats.short_commits);
+    try std.testing.expectEqual(0, stats.zero_transfers);
+}
+
+test "PlaybackDevice: stop() from another thread ends start() on the null device" {
+    var device = try NullDevice.init(null_options);
+    defer device.deinit(std.testing.allocator);
+    try device.prepare(std.testing.allocator);
+
+    const Stopper = struct {
+        fn run(dev: *NullDevice, ctx: *const NullCtx) void {
+            // let it render a few periods first, so stop() lands mid-run, not before start()
+            while (@atomicLoad(usize, &ctx.frames, .acquire) < 8 * 512) std.atomic.spinLoopHint();
+            dev.stop();
+        }
+    };
+
+    var ctx = NullCtx{ .device = &device };
+    const thread = try std.Thread.spawn(.{}, Stopper.run, .{ &device, &ctx });
+    try device.start(&ctx, NullCtx.cb);
+    thread.join();
+
+    try std.testing.expect(ctx.frames >= 8 * 512);
+    try std.testing.expectEqual(0, device.getStats().xruns);
+}
+
+test "PlaybackDevice: stop() before start() runs no periods on the null device" {
+    var device = try NullDevice.init(null_options);
+    defer device.deinit(std.testing.allocator);
+    try device.prepare(std.testing.allocator);
+
+    var ctx = NullCtx{ .device = &device };
+    device.stop();
+    try device.start(&ctx, NullCtx.cb);
+
+    try std.testing.expectEqual(0, ctx.calls);
+    try std.testing.expectEqual(0, device.getStats().periods);
+    try std.testing.expectEqual(.prepared, device.pcm.state()); // never started
+}
+
+test "PlaybackDevice: start() again after stop() renders again (stop is consumed)" {
+    var device = try NullDevice.init(null_options);
+    defer device.deinit(std.testing.allocator);
+    try device.prepare(std.testing.allocator);
+
+    var ctx = NullCtx{ .device = &device, .stop_after = 2 * 512 };
+    try device.start(&ctx, NullCtx.cb);
+    const first = ctx.frames;
+
+    ctx.stop_after = first + 2 * 512;
+    try device.start(&ctx, NullCtx.cb);
+
+    try std.testing.expect(ctx.frames >= first + 2 * 512);
     try std.testing.expectEqual(0, device.getStats().xruns);
 }

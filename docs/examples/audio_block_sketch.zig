@@ -278,7 +278,7 @@ fn slicesOverlap(comptime T: type, a: []const T, b: []const T) bool {
 pub fn blocksOverlap(comptime T: type, a: ConstAudioBlock(T), b: ConstAudioBlock(T)) bool {
     for (0..a.channel_count) |ca| {
         for (0..b.channel_count) |cb| {
-            if (slicesOverlap(T, a.channel(ca), b.channel(cb))) return true;
+            if (slicesOverlap(T, a.getSamples(ca), b.getSamples(cb))) return true;
         }
     }
     return false;
@@ -290,7 +290,7 @@ fn requireSameShape(comptime T: type, dst: AudioBlock(T), src: ConstAudioBlock(T
 }
 
 pub fn clear(comptime T: type, dst: AudioBlock(T)) void {
-    for (0..dst.channel_count) |c| @memset(dst.channel(c), 0);
+    for (0..dst.channel_count) |c| @memset(dst.getSamples(c), 0);
 }
 
 /// dst = src. Same shape, disjoint storage. Strides may differ.
@@ -298,7 +298,7 @@ pub fn copy(comptime T: type, dst: AudioBlock(T), src: ConstAudioBlock(T)) Block
     try requireSameShape(T, dst, src);
     if (blocksOverlap(T, dst.asConst(), src)) return error.forbidden_overlap;
 
-    for (0..dst.channel_count) |c| @memcpy(dst.channel(c), src.channel(c));
+    for (0..dst.channel_count) |c| @memcpy(dst.getSamples(c), src.getSamples(c));
 }
 
 /// dst += src. This is mixing; `copy` is not.
@@ -307,7 +307,7 @@ pub fn accumulate(comptime T: type, dst: AudioBlock(T), src: ConstAudioBlock(T))
     if (blocksOverlap(T, dst.asConst(), src)) return error.forbidden_overlap;
 
     for (0..dst.channel_count) |c| {
-        for (dst.channel(c), src.channel(c)) |*d, s| d.* += s;
+        for (dst.getSamples(c), src.getSamples(c)) |*d, s| d.* += s;
     }
 }
 
@@ -316,7 +316,7 @@ pub fn interleave(comptime T: type, dst: []T, src: ConstAudioBlock(T)) BlockErro
     if (dst.len != src.channel_count * src.frame_count) return error.shape_mismatch;
 
     for (0..src.channel_count) |c| {
-        for (src.channel(c), 0..) |sample, frame| {
+        for (src.getSamples(c), 0..) |sample, frame| {
             dst[frame * src.channel_count + c] = sample;
         }
     }
@@ -327,7 +327,7 @@ pub fn deinterleave(comptime T: type, dst: AudioBlock(T), src: []const T) BlockE
     if (src.len != dst.channel_count * dst.frame_count) return error.shape_mismatch;
 
     for (0..dst.channel_count) |c| {
-        for (dst.channel(c), 0..) |*sample, frame| {
+        for (dst.getSamples(c), 0..) |*sample, frame| {
             sample.* = src[frame * dst.channel_count + c];
         }
     }
@@ -353,7 +353,7 @@ const ExampleGain = struct {
         const out = ctx.outputs[0];
 
         for (0..out.channel_count) |c| {
-            for (out.channel(c), in.channel(c)) |*o, i| o.* = i * self.gain;
+            for (out.getSamples(c), in.getSamples(c)) |*o, i| o.* = i * self.gain;
         }
     }
 };
@@ -372,8 +372,8 @@ test "partial block: channel 1 starts at stride, not at frame_count" {
         .channel_stride = 512,
     });
 
-    try testing.expectEqual(@as(usize, 128), block.channel(1).len);
-    try testing.expectEqual(&storage[512], &block.channel(1)[0]);
+    try testing.expectEqual(@as(usize, 128), block.getSamples(1).len);
+    try testing.expectEqual(&storage[512], &block.getSamples(1)[0]);
 }
 
 test "sub-block preserves stride and confines writes to active frames" {
@@ -385,7 +385,7 @@ test "sub-block preserves stride and confines writes to active frames" {
     });
 
     const sub = try block.subBlock(2, 3);
-    for (0..sub.channel_count) |c| @memset(sub.channel(c), 1);
+    for (0..sub.channel_count) |c| @memset(sub.getSamples(c), 1);
 
     const expected = [_]f32{ 0, 0, 1, 1, 1, 0, 0, 0 } ** 2;
     try testing.expectEqualSlices(f32, &expected, &storage);
@@ -406,7 +406,7 @@ test "zero-frame block is valid and every operation on it is a no-op" {
     var storage = [_]f32{7} ** 16;
     const block = try AudioBlock(f32).init(&storage, .{ .channel_count = 2, .frame_count = 0, .channel_stride = 8 });
 
-    try testing.expectEqual(@as(usize, 0), block.channel(1).len);
+    try testing.expectEqual(@as(usize, 0), block.getSamples(1).len);
     clear(f32, block);
     try testing.expectEqual(@as(f32, 7), storage[0]);
 }
@@ -419,8 +419,8 @@ test "owned buffer: aligned channel starts, stride independent of frame count" {
     try testing.expectEqual(@as(usize, 112), owned.channel_stride);
 
     const block = try owned.block(100);
-    try testing.expect(@intFromPtr(block.channel(0).ptr) % 64 == 0);
-    try testing.expect(@intFromPtr(block.channel(1).ptr) % 64 == 0);
+    try testing.expect(@intFromPtr(block.getSamples(0).ptr) % 64 == 0);
+    try testing.expect(@intFromPtr(block.getSamples(1).ptr) % 64 == 0);
     try testing.expectError(error.out_of_range, owned.block(101));
 }
 
@@ -435,11 +435,11 @@ test "pool slots are independent" {
     const a = try pool.slot(0, 64);
     const b = try pool.slot(1, 64);
 
-    for (0..2) |c| @memset(a.channel(c), 1);
+    for (0..2) |c| @memset(a.getSamples(c), 1);
 
     try testing.expect(!blocksOverlap(f32, a.asConst(), b.asConst()));
     for (0..2) |c| {
-        for (b.channel(c)) |sample| try testing.expectEqual(@as(f32, 0), sample);
+        for (b.getSamples(c)) |sample| try testing.expectEqual(@as(f32, 0), sample);
     }
     try testing.expectError(error.out_of_range, pool.slot(3, 64));
 }
@@ -463,8 +463,8 @@ test "copy rejects shape mismatch and overlap, allows different strides" {
     const padded_dst = try pool.slot(0, 4);
 
     try copy(f32, padded_dst, packed_src);
-    try testing.expectEqualSlices(f32, &.{ 1, 2, 3, 4 }, padded_dst.channel(0));
-    try testing.expectEqualSlices(f32, &.{ 5, 6, 7, 8 }, padded_dst.channel(1));
+    try testing.expectEqualSlices(f32, &.{ 1, 2, 3, 4 }, padded_dst.getSamples(0));
+    try testing.expectEqualSlices(f32, &.{ 5, 6, 7, 8 }, padded_dst.getSamples(1));
 }
 
 test "accumulate mixes, copy replaces" {
@@ -475,16 +475,16 @@ test "accumulate mixes, copy replaces" {
     const a = try pool.slot(1, 4);
     const b = try pool.slot(2, 4);
 
-    @memset(a.channel(0), 0.25);
-    @memset(b.channel(0), 0.5);
+    @memset(a.getSamples(0), 0.25);
+    @memset(b.getSamples(0), 0.5);
 
     clear(f32, mix);
     try accumulate(f32, mix, a.asConst());
     try accumulate(f32, mix, b.asConst());
-    try testing.expectEqualSlices(f32, &.{ 0.75, 0.75, 0.75, 0.75 }, mix.channel(0));
+    try testing.expectEqualSlices(f32, &.{ 0.75, 0.75, 0.75, 0.75 }, mix.getSamples(0));
 
     try copy(f32, mix, b.asConst());
-    try testing.expectEqualSlices(f32, &.{ 0.5, 0.5, 0.5, 0.5 }, mix.channel(0));
+    try testing.expectEqualSlices(f32, &.{ 0.5, 0.5, 0.5, 0.5 }, mix.getSamples(0));
 }
 
 test "layout round trip at the boundary" {
@@ -497,8 +497,8 @@ test "layout round trip at the boundary" {
     const block = try owned.block(3);
     try deinterleave(f32, block, &device_in);
 
-    try testing.expectEqualSlices(f32, &.{ 1, 2, 3 }, block.channel(0));
-    try testing.expectEqualSlices(f32, &.{ -1, -2, -3 }, block.channel(1));
+    try testing.expectEqualSlices(f32, &.{ 1, 2, 3 }, block.getSamples(0));
+    try testing.expectEqualSlices(f32, &.{ -1, -2, -3 }, block.getSamples(1));
 
     try interleave(f32, &device_out, block.asConst());
     try testing.expectEqualSlices(f32, &device_in, &device_out);
@@ -512,11 +512,11 @@ test "node with separate input and output over a partial block" {
 
     // sentinel in the full-capacity output, then process only 5 frames
     const full_out = try pool.slot(1, 16);
-    for (0..2) |c| @memset(full_out.channel(c), 9);
+    for (0..2) |c| @memset(full_out.getSamples(c), 9);
 
     const in = try pool.slot(0, 5);
     const out = try pool.slot(1, 5);
-    for (0..2) |c| @memset(in.channel(c), 1);
+    for (0..2) |c| @memset(in.getSamples(c), 1);
 
     var gain = ExampleGain{ .gain = 0.5 };
     gain.process(.{
@@ -526,8 +526,8 @@ test "node with separate input and output over a partial block" {
     });
 
     for (0..2) |c| {
-        try testing.expectEqualSlices(f32, &(.{0.5} ** 5), full_out.channel(c)[0..5]);
-        try testing.expectEqualSlices(f32, &(.{9} ** 11), full_out.channel(c)[5..]);
-        try testing.expectEqualSlices(f32, &(.{1} ** 5), in.channel(c));
+        try testing.expectEqualSlices(f32, &(.{0.5} ** 5), full_out.getSamples(c)[0..5]);
+        try testing.expectEqualSlices(f32, &(.{9} ** 11), full_out.getSamples(c)[5..]);
+        try testing.expectEqualSlices(f32, &(.{1} ** 5), in.getSamples(c));
     }
 }

@@ -1,5 +1,5 @@
 const std = @import("std");
-const buffer = @import("buffer");
+const buffer = @import("core/buffer");
 const node = @import("../node.zig");
 
 pub fn Gain(comptime T: type) type {
@@ -21,7 +21,7 @@ pub fn Gain(comptime T: type) type {
             const output = ctx.outputs[0];
 
             for (0..output.channel_count) |ch| {
-                for (output.channel(ch), input.channel(ch)) |*out, in| {
+                for (output.getSamples(ch), input.getSamples(ch)) |*out, in| {
                     out.* = in * self.gain;
                 }
             }
@@ -41,10 +41,10 @@ test "Gain - scales every channel of a partial block, leaves padding and input a
 
     const full_out = try pool.borrowSlot(1, 16);
 
-    for (0..2) |ch| @memset(full_out.channel(ch), 9);
+    for (0..2) |ch| @memset(full_out.getSamples(ch), 9);
     const in = try pool.borrowSlot(0, 5);
     const out = try pool.borrowSlot(1, 5);
-    for (0..2) |ch| @memset(in.channel(ch), 1);
+    for (0..2) |ch| @memset(in.getSamples(ch), 1);
 
     var gain = Gain(f32){ .gain = 0.5 };
     const gain_node = node.Node(f32).init(&gain);
@@ -56,9 +56,9 @@ test "Gain - scales every channel of a partial block, leaves padding and input a
     gain_node.process(.{ .inputs = &.{in.asConst()}, .outputs = &.{out}, .frame_count = 5 });
 
     for (0..2) |ch| {
-        try expectAll(f32, 0.5, full_out.channel(ch)[0..5]);
-        try expectAll(f32, 9, full_out.channel(ch)[5..]);
-        try expectAll(f32, 1, in.channel(ch));
+        try expectAll(f32, 0.5, full_out.getSamples(ch)[0..5]);
+        try expectAll(f32, 9, full_out.getSamples(ch)[5..]);
+        try expectAll(f32, 1, in.getSamples(ch));
     }
 }
 

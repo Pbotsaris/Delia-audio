@@ -218,7 +218,7 @@ pub fn Gain(comptime T: type) type {
             const out = ctx.outputs[0];
 
             for (0..out.channel_count) |ch| {
-                for (out.channel(ch), in.channel(ch)) |*o, i| o.* = i * self.gain;
+                for (out.getSamples(ch), in.getSamples(ch)) |*o, i| o.* = i * self.gain;
             }
         }
     };
@@ -289,9 +289,9 @@ pub fn Sine(comptime T: type) type {
         pub fn process(self: *Self, ctx: ProcessContext(T)) void {
             const out = ctx.outputs[0];
 
-            _ = self.wave.sine(out.channel(0));
+            _ = self.wave.sine(out.getSamples(0));
 
-            for (1..out.channel_count) |ch| @memcpy(out.channel(ch), out.channel(0));
+            for (1..out.channel_count) |ch| @memcpy(out.getSamples(ch), out.getSamples(0));
         }
     };
 }
@@ -333,7 +333,7 @@ test "Gain through Node(T): writes only active frames of its output, input uncha
 
     const in = scratch.block(0, 5);
     const out = scratch.block(1, 5);
-    for (0..2) |ch| @memset(in.channel(ch), 1);
+    for (0..2) |ch| @memset(in.getSamples(ch), 1);
 
     var gain = Gain(f32){ .gain = 0.5 };
     const node = Node(f32).init(&gain);
@@ -350,9 +350,9 @@ test "Gain through Node(T): writes only active frames of its output, input uncha
 
     const full_out = scratch.block(1, Scratch.stride);
     for (0..2) |ch| {
-        try expectAll(0.5, full_out.channel(ch)[0..5]);
-        try expectAll(9, full_out.channel(ch)[5..]);
-        try expectAll(1, in.channel(ch));
+        try expectAll(0.5, full_out.getSamples(ch)[0..5]);
+        try expectAll(9, full_out.getSamples(ch)[5..]);
+        try expectAll(1, in.getSamples(ch));
     }
 }
 
@@ -385,18 +385,18 @@ test "Sine through Node(T): zero inputs, every channel written, phase continues 
     node_whole.process(.{ .inputs = &.{}, .outputs = &.{all}, .frame_count = 16 });
 
     for (0..2) |ch| {
-        try testing.expectEqualSlices(f32, all.channel(ch), split.block(0, 16).channel(ch));
+        try testing.expectEqualSlices(f32, all.getSamples(ch), split.block(0, 16).getSamples(ch));
     }
 
     // both channels carry the same signal, and it is the expected sine
-    try testing.expectEqualSlices(f32, all.channel(0), all.channel(1));
-    for (all.channel(0), 0..) |sample, n| {
+    try testing.expectEqualSlices(f32, all.getSamples(0), all.getSamples(1));
+    for (all.getSamples(0), 0..) |sample, n| {
         const expected: f64 = @sin(2 * std.math.pi * 440 * @as(f64, @floatFromInt(n)) / 48000);
         try testing.expectApproxEqAbs(@as(f32, @floatCast(expected)), sample, 1e-5);
     }
 
     // slot 1 was never handed to the node
-    for (0..2) |ch| try expectAll(9, split.block(1, Scratch.stride).channel(ch));
+    for (0..2) |ch| try expectAll(9, split.block(1, Scratch.stride).getSamples(ch));
 }
 
 test "prepare is repeatable and changes the sample rate" {

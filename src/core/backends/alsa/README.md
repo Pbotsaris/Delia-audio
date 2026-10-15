@@ -14,21 +14,21 @@ full duplex are not implemented yet.
 | File | Contents | Links alsa-lib |
 |---|---|---|
 | `device.zig` | `PlaybackDevice(Ctx, fmt)`: open, negotiate hw/sw params, prepare, own the seam and the loop | yes |
-| `loop.zig` | `PlaybackLoop(Ctx, Pcm, fmt)`: the per-period transfer policy, generic over the `Pcm` seam; `Stats`, `LoopOptions`, `LoopError` | no |
-| `pcm.zig` | `AlsaPcm`: the seam over `snd_pcm_*`; negative results become `PcmError` here; the module's only `@cImport` | yes |
+| `loop.zig` | `PlaybackLoop(Ctx, Pcm, fmt)`: the per-period transfer policy, generic over the `Pcm` seam; `Stats`, `LoopOptions`, `LoopError`; the scripted transfer tests | no |
+| `pcm.zig` | `Alsa`: the seam over `snd_pcm_*`; negative results become `PcmError` and `snd_pcm_state_t` becomes `State` here; the module's only `@cImport`. `ScriptedPcm`: the test double the loop tests run on | yes |
 | `convert.zig` | `SampleFormat`, `SampleConverter(fmt)`: device bytes to and from planar `f32` blocks in one pass | no |
 | `examples.zig` | backend-only examples: a device, a context, a callback, no graph | yes |
 | `root.zig` | module root; its `test` block aggregates the files above | — |
 
 Everything that touches alsa-lib goes through `pcm.c`. Each `@cImport` produces its own opaque
 `snd_pcm_t`, so a second import in another file would not be assignable to the first.
-`loop.zig` has no C import on purpose: its tests drive it with a scripted `Pcm` instead of a
-device.
+`loop.zig` makes no ALSA call: it only sees the `Pcm` it is instantiated with, and its tests
+drive it with `ScriptedPcm` instead of a device. No alsa-lib type crosses the seam.
 
 ## Usage
 
 ```zig
-const alsa = @import("backends").alsa;
+const alsa = @import("core/backends/alsa");
 
 const Ctx = struct {
     phase: f32 = 0,
@@ -37,7 +37,7 @@ const Ctx = struct {
         // write every active frame of every channel; nothing is cleared first
         for (0..out.frame_count) |i| {
             const s = @sin(self.phase);
-            for (0..out.channel_count) |ch| out.channel(ch)[i] = 0.2 * s;
+            for (0..out.channel_count) |ch| out.getSamples(ch)[i] = 0.2 * s;
             self.phase += 2.0 * std.math.pi * 440.0 / 48000.0;
         }
     }
@@ -111,61 +111,77 @@ negotiated numbers are kept.
 ### `start`: the loop
 
 `start` runs on the calling thread and returns when `stop()` is called from another thread or
-when the loop hits an error it cannot recover from. One iteration handles one period:
+when the loop hits an error it cannot recover from. It runs one period at a time, checking for
+a stop before each:
 
 ```text
-avail = snd_pcm_avail_update()
-if avail < period_frames:
-    if the stream has not been started yet:    snd_pcm_start(); next period
-    else:                                       snd_pcm_wait(timeout_ms)
-remaining = period_frames
-while remaining > 0:
-    region = snd_pcm_mmap_begin(remaining)      may return fewer frames, including zero
-    callback(ctx, staging[0..region.frame_count])
-    writeInterleaved(region.bytes, staging)     f32 planar -> device bytes
-    committed = snd_pcm_mmap_commit(region.frame_count)
-    remaining -= committed
+while no stop requested:
+    remaining = period_frames
+    while remaining > 0:
+        avail = snd_pcm_avail_update()              fresh before every begin
+        if avail < remaining:
+            if state() == prepared:  snd_pcm_start(); next period    ring is full: start it
+            else:                    snd_pcm_wait(timeout_ms); again  woke: re-read avail
+                                     (timeout: next period, so stop() is seen)
+        region = snd_pcm_mmap_begin(remaining)      may return fewer frames, including zero
+        callback(ctx, staging[0..region.frame_count])
+        writeInterleaved(region.bytes, staging)     f32 planar -> device bytes
+        committed = snd_pcm_mmap_commit(region.frame_count)
+        if committed < region.frame_count:          lost frames: count, next period
+        remaining -= committed
 ```
 
 Why the explicit start: after `prepare` the whole ring is free, so the first `n_periods`
-iterations fill it without waiting. Only when `avail` drops below one period does the loop
-call `snd_pcm_start`, so the hardware begins playing from a full buffer rather than racing the
-first write. After an xrun recovery (`snd_pcm_prepare`) the stream is stopped again and the same
-fill-then-start sequence repeats.
+periods fill it without waiting. Only when less is free than the period owes, with the stream
+still `prepared`, does the loop call `snd_pcm_start`, so the hardware begins playing from a
+full buffer rather than racing the first write. After an xrun recovery (`snd_pcm_prepare`) the
+stream is `prepared` again and the same fill-then-start sequence repeats; after a successful
+resume it is still `running` and is not started again. The loop reads this from `state()`
+rather than tracking it.
 
-Transfer rules:
+Transfer rules (contract section 4):
 
-- `avail_update` is called fresh every period, never reused.
+- `avail_update` is called immediately before every `mmap_begin`, never reused: after a short
+  `begin`, and after a `wait`, it is read again. `begin` sizes its region from the hardware
+  pointer that call read.
+- Readiness is judged against what the period still owes: after a short `begin` of 300 out of
+  512, 212 free frames are enough, so the loop does not wait for a whole period.
 - The frame count returned by `mmap_begin` is the only frame count for that block: it sizes the
-  callback's block, the conversion, and the commit.
+  callback's block, the conversion, and the commit. It is never larger than requested
+  (asserted).
 - A `mmap_begin` that fails leaves no usable region. The callback is not called, nothing is
   committed, a discontinuity is counted and the loop recovers.
-- A `mmap_commit` that returns fewer frames than asked (or fails) is a discontinuity, not a
-  retry. The rendered frames that were not committed are lost; the callback is not called again
-  for them.
-- Zero progress (`begin` or `commit` returning 0) is bounded: after `max_zero_transfers` in a
-  row the loop returns `no_progress`.
+- A `mmap_commit` that returns fewer frames than asked is a discontinuity, not a retry and not
+  an xrun: the rendered frames that were not committed are lost, `short_commits` and
+  `discontinuities` are counted, and the period ends without recovery. If the stream did xrun,
+  the next `avail_update` says so. A commit that returns 0 also counts as a zero transfer.
+- A `mmap_commit` that fails recovers and counts a discontinuity.
+- Zero progress is bounded: after `max_zero_transfers` zero `begin`s in a row the loop returns
+  `no_progress`. An early wakeup is a `wait`, not zero progress.
 
 Recovery:
 
 - `-EPIPE` (xrun) and `-ESTRPIPE` (suspended) are converted to `PcmError.xrun` / `.suspended`
-  at the seam. The loop counts an xrun and calls `AlsaPcm.recover`: `snd_pcm_resume` with a
+  at the seam. The loop counts an xrun and calls `Alsa.recover`: `snd_pcm_resume` with a
   bounded retry on `EAGAIN` for suspend, then `snd_pcm_prepare`. Playback restarts from silence
-  on the next period; staging is not cleared and the callback's state is not reset.
-- A `snd_pcm_wait` timeout is not an error: the loop just checks the running flag and goes
-  around again. This is what makes `stop()` observable, so `timeout_ms` must be finite.
+  once refilled; staging is not cleared and the callback's state is not reset.
+- A `snd_pcm_wait` timeout is not an error: the period is skipped and `start` checks for a
+  stop. This is what makes `stop()` observable, so `timeout_ms` must be finite.
 - Any other negative result is `PcmError.io` and ends `start`. A recovery that itself fails ends
   `start` with `failed_recovery`. In both cases call `prepare` again before `start`.
 
 Diagnostics are bounded counters in `Stats` (`periods`, `blocks`, `xruns`, `discontinuities`,
-`short_commits`, `zero_transfers`), read with `getStats()` after `start` returns. The loop
-never prints.
+`short_commits`, `zero_transfers`), read with `getStats()` after `start` returns. `xruns`
+counts only what the device reported. The loop never prints.
 
 ### `stop` and `deinit`
 
-`stop()` sets an atomic flag the loop reads once per period, so it returns `start` within one
-period plus one `timeout_ms`. `deinit` must come after `start` has returned: it frees staging,
-`snd_pcm_drop`s pending frames and closes the handle.
+`stop()` sets an atomic `stop_requested` flag that `start` reads before each period, so `start`
+returns within one period plus one `timeout_ms`. A `stop()` that arrives before `start()` is not
+lost: that `start` runs no periods. Each stop is consumed by the `start` it ends, so stop, swap
+the plan, `start` again works without a reset. A separate `running` flag, written only by
+`start`, says whether the loop is still inside it. `deinit` must come after `start` has
+returned: it frees staging, `snd_pcm_drop`s pending frames and closes the handle.
 
 ## Sample conversion
 
@@ -183,16 +199,27 @@ both and two passes would cost a scratch buffer:
 ## Tests
 
 ```sh
-zig build test -Dtest-filter=PlaybackDevice -Dtest-filter=PlaybackLoop -Dtest-filter=regionFromArea -Dtest-filter=errnoToPcm
+zig build test                                  # the module is test_core_backends_alsa
+zig build test -Dtest-filter=PlaybackDevice     # only the null-device tests
+zig build test -Dtest-filter=gap                # the tests written against the M4a loop's bugs
 ```
 
-`PlaybackDevice renders periods on the null device` runs the whole init/prepare/start/stop/deinit
-path on ALSA's `null` plugin, which every machine with alsa-lib has. It accepts any format and
-geometry, so it proves the plumbing, not the negotiation; the hardware table below does that.
+- `loop.zig`: one test per transfer rule (contract section 4) and per lifecycle rule the loop
+  owns (section 6), driven by `ScriptedPcm`. A `Counter` callback writes frame index n as
+  `n / maxInt(i16)`, so wire frame k decodes to the frame it came from and any lost or
+  re-rendered frame is a jump in the sequence. The allocation test arms a `FailingAllocator`
+  after `init` and runs 100 periods.
+- `convert.zig`: clamping, round trip, `size_mismatch` with nothing written, padding untouched.
+- `pcm.zig`: `regionFromArea` geometry and `errnoToPcm`.
+- `device.zig`: the whole init/prepare/start/stop/deinit path on ALSA's `null` plugin, which
+  every machine with alsa-lib has, through the real `Alsa` seam: state transitions, `stop()`
+  from another thread and before `start()`, restart after a stop. `null` accepts any format and
+  geometry and consumes frames instantly, so it proves the plumbing, not the negotiation or the
+  timing (it never waits); the hardware table below does that.
 
 ## Hardware runs
 
-One row per card. Target: the fan-in graph from `src/graph/examples.zig`, 60 s at 512/48000,
+One row per card. Target: the fan-in graph from `src/core/graph/examples.zig`, 60 s at 512/48000,
 zero xruns.
 
 | Date | Card (`ident`) | Kernel | alsa-lib | Access | Format | Rate | Period x n | Duration | xruns | discontinuities | short_commits | Notes |

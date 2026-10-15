@@ -115,7 +115,7 @@ pub fn SampleConverter(comptime fmt: SampleFormat) type {
             const frame_bytes = src.channel_count * bytes_per_sample;
             for (0..src.channel_count) |ch| {
                 var at = ch * bytes_per_sample;
-                for (src.channel(ch)) |sample| {
+                for (src.getSamples(ch)) |sample| {
                     encode(dst[at..][0..bytes_per_sample], sample);
                     at += frame_bytes;
                 }
@@ -560,7 +560,7 @@ const Tone = struct {
     fn render(self: *Tone, out: AudioBlock(f32)) void {
         self.calls += 1;
         self.frames += out.frame_count;
-        for (0..out.channel_count) |ch| @memset(out.channel(ch), 0.25);
+        for (0..out.channel_count) |ch| @memset(out.getSamples(ch), 0.25);
     }
 };
 

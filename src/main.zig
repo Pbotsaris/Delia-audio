@@ -1,10 +1,10 @@
 const std = @import("std");
 const dsp = @import("dsp");
-const graph = @import("graph");
-const audio_specs = @import("common").audio_specs;
+const graph = @import("core/graph");
+const audio_specs = @import("core/common").audio_specs;
 const ex = @import("examples.zig");
 
-const backends = @import("backends");
+const alsa = @import("core/backends/alsa");
 
 pub const std_options: std.Options = .{
     .log_level = .debug,

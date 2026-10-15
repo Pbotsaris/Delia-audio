@@ -1,5 +1,5 @@
 const std = @import("std");
-const buffer = @import("buffer");
+const buffer = @import("core/buffer");
 const node = @import("../node.zig");
 
 pub const Waveform = enum {
@@ -43,14 +43,14 @@ pub fn Oscillator(comptime T: type) type {
         /// so every channel carries the same signal and phase is continuous across calls.
         pub fn process(self: *Self, ctx: Node.ProcessContext) void {
             const output = ctx.outputs[0];
-            const first = output.channel(0);
+            const first = output.getSamples(0);
 
             for (first) |*out| {
                 out.* = self.sample();
                 self.advancePhase();
             }
 
-            for (1..output.channel_count) |ch| @memcpy(output.channel(ch), first);
+            for (1..output.channel_count) |ch| @memcpy(output.getSamples(ch), first);
         }
 
         fn sample(self: Self) T {
@@ -94,7 +94,7 @@ test "Oscillator - sine matches an f64 reference, all channels, only active fram
     defer pool.deinit(testing.allocator);
 
     const full = try pool.borrowSlot(0, 16);
-    for (0..2) |ch| @memset(full.channel(ch), 9);
+    for (0..2) |ch| @memset(full.getSamples(ch), 9);
 
     var osc = Oscillator(f32).init(.sine, 440, 1);
     const osc_node = node.Node(f32).init(&osc);
@@ -107,12 +107,12 @@ test "Oscillator - sine matches an f64 reference, all channels, only active fram
     const out = try pool.borrowSlot(0, 12);
     osc_node.process(.{ .inputs = &.{}, .outputs = &.{out}, .frame_count = 12 });
 
-    for (out.channel(0), 0..) |sample, n| {
+    for (out.getSamples(0), 0..) |sample, n| {
         try testing.expectApproxEqAbs(referenceSine(440, 48000, n), sample, 1e-5);
     }
-    try testing.expectEqualSlices(f32, out.channel(0), out.channel(1));
+    try testing.expectEqualSlices(f32, out.getSamples(0), out.getSamples(1));
 
-    for (0..2) |ch| try expectAll(f32, 9, full.channel(ch)[12..]);
+    for (0..2) |ch| try expectAll(f32, 9, full.getSamples(ch)[12..]);
 }
 
 test "Oscillator - phase continues across calls: 8 + 8 frames equal 16" {
@@ -135,7 +135,7 @@ test "Oscillator - phase continues across calls: 8 + 8 frames equal 16" {
     const all = try owned_whole.borrowBlock(16);
     whole_node.process(.{ .inputs = &.{}, .outputs = &.{all}, .frame_count = 16 });
 
-    try testing.expectEqualSlices(f32, all.channel(0), both.channel(0));
+    try testing.expectEqualSlices(f32, all.getSamples(0), both.getSamples(0));
 }
 
 test "Oscillator - prepare is repeatable and rescales the increment" {

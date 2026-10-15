@@ -159,7 +159,7 @@ pub fn SampleConverter(comptime fmt: SampleFormat) type {
             const frame_bytes = src.channel_count * bytes_per_sample;
             for (0..src.channel_count) |c| {
                 var at = c * bytes_per_sample;
-                for (src.channel(c)) |sample| {
+                for (src.getSamples(c)) |sample| {
                     encode(dst[at..][0..bytes_per_sample], sample);
                     at += frame_bytes;
                 }
@@ -173,7 +173,7 @@ pub fn SampleConverter(comptime fmt: SampleFormat) type {
             const frame_bytes = dst.channel_count * bytes_per_sample;
             for (0..dst.channel_count) |c| {
                 var at = c * bytes_per_sample;
-                for (dst.channel(c)) |*sample| {
+                for (dst.getSamples(c)) |*sample| {
                     sample.* = decode(src[at..][0..bytes_per_sample]);
                     at += frame_bytes;
                 }
@@ -470,7 +470,7 @@ const Sine = struct {
             const s = ctx.amplitude * @sin(ctx.phase);
             ctx.phase += ctx.increment;
             if (ctx.phase > std.math.tau) ctx.phase -= std.math.tau;
-            for (0..out.channel_count) |c| out.channel(c)[n] = s;
+            for (0..out.channel_count) |c| out.getSamples(c)[n] = s;
         }
     }
 };
@@ -643,8 +643,8 @@ test "s16 round trip within 1/32767; wrong length rejected and nothing written" 
     for (src_samples, dst_samples) |a, b| try testing.expectApproxEqAbs(a, b, 1.0 / 32767.0);
 
     // interleaved order on the wire: frame 0 is (ch0[0], ch1[0])
-    try testing.expectEqual(S16.decode(bytes[0..2]), dst.channel(0)[0]);
-    try testing.expectEqual(S16.decode(bytes[2..4]), dst.channel(1)[0]);
+    try testing.expectEqual(S16.decode(bytes[0..2]), dst.getSamples(0)[0]);
+    try testing.expectEqual(S16.decode(bytes[2..4]), dst.getSamples(1)[0]);
 
     var short: [15]u8 = [_]u8{0x55} ** 15;
     try testing.expectError(error.size_mismatch, S16.writeInterleaved(&short, src));

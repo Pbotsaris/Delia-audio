@@ -18,10 +18,10 @@
 //!     clear 3, accumulate 3 += 1, accumulate 3 += 2, copy_out 3
 
 const std = @import("std");
-const specs = @import("common").audio_specs;
+const specs = @import("core/common").audio_specs;
 const graph_node = @import("node.zig");
 const plan = @import("plan.zig");
-const buffer = @import("buffer");
+const buffer = @import("core/buffer");
 const b = @import("builder.zig");
 
 const ConstAudioBlock = buffer.ConstAudioBlock;
@@ -437,8 +437,8 @@ test "compile - chain renders four blocks that match the reference, phase contin
 
     for (0..4) |block| try compiled.render(try out.subBlock(block * 64, 64));
 
-    try expectScaledSine(0.5, 0, out.channel(0));
-    try testing.expectEqualSlices(f32, out.channel(0), out.channel(1));
+    try expectScaledSine(0.5, 0, out.getSamples(0));
+    try testing.expectEqualSlices(f32, out.getSamples(0), out.getSamples(1));
 }
 
 test "compile - chain: op list and slot count are pinned" {
@@ -480,7 +480,7 @@ test "compile - partial last block (64, 64, 17) is continuous; zero frames is a 
     try compiled.render(try out.subBlock(64, 64));
     try compiled.render(try out.subBlock(128, 17));
 
-    try expectScaledSine(0.5, 0, out.channel(0));
+    try expectScaledSine(0.5, 0, out.getSamples(0));
 }
 
 test "compile - render writes every slot's active frames and nothing past them" {
@@ -501,8 +501,8 @@ test "compile - render writes every slot's active frames and nothing past them" 
         const full = try compiled.pool.borrowSlot(slot, 64);
 
         for (0..2) |ch| {
-            for (full.channel(ch)[0..10]) |sample| try testing.expect(sample != 9);
-            for (full.channel(ch)[10..]) |sample| try testing.expectEqual(9, sample);
+            for (full.getSamples(ch)[0..10]) |sample| try testing.expect(sample != 9);
+            for (full.getSamples(ch)[10..]) |sample| try testing.expectEqual(9, sample);
         }
     }
 }
@@ -548,7 +548,7 @@ test "compile - fan-out and fan-in into the graph output sums to 0.75 * sine" {
     const out = try owned.borrowBlock(64);
     try compiled.render(out);
 
-    try expectScaledSine(0.75, 0, out.channel(0));
+    try expectScaledSine(0.75, 0, out.getSamples(0));
 }
 
 test "compile - diamond mixes into the consumer's input port" {
@@ -581,7 +581,7 @@ test "compile - diamond mixes into the consumer's input port" {
 
     try compiled.render(out);
 
-    try expectScaledSine(1.5, 0, out.channel(0));
+    try expectScaledSine(1.5, 0, out.getSamples(0));
 }
 
 test "compile - order follows dependencies, not insertion order" {

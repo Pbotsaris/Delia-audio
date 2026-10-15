@@ -6,9 +6,9 @@ pub const device = @import("device.zig");
 pub const examples = @import("examples.zig");
 
 test {
-    _ = loop;
-    _ = convert;
-    _ = pcm;
-    _ = device;
+    @import("std").testing.refAllDecls(loop);
+    @import("std").testing.refAllDecls(convert);
+    @import("std").testing.refAllDecls(pcm);
+    @import("std").testing.refAllDecls(device);
     @import("std").testing.refAllDecls(examples);
 }

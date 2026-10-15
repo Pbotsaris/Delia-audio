@@ -3,8 +3,8 @@
 //! Contract: docs/graph-contract.md.
 
 const std = @import("std");
-const buffer = @import("buffer");
-const specs = @import("common").audio_specs;
+const buffer = @import("core/buffer");
+const specs = @import("core/common").audio_specs;
 const nodes = @import("nodes/root.zig");
 
 const GraphBuilder = @import("builder.zig").GraphBuilder;

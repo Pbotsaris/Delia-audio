@@ -10,16 +10,16 @@ class ZigBuilder(build_ext):
             os.makedirs(self.build_lib)
         mode = "Debug" if self.debug else "ReleaseFast"
 
-        # python.zig imports the `dsp` module, which imports `common`. Outside `zig build`
+        # python.zig imports the `dsp` module, which imports `core/common`. Outside `zig build`
         # the modules are declared on the command line: `--dep` entries belong to the next
         # `-M<name>=<root file>`. Keep this in step with the module table in build.zig.
         src = os.path.dirname(ext.sources[0])
         modules = [
             "--dep", "dsp",
             f"-Mroot={ext.sources[0]}",
-            "--dep", "common",
+            "--dep", "core/common",
             f"-Mdsp={os.path.join(src, 'dsp', 'dsp.zig')}",
-            f"-Mcommon={os.path.join(src, 'common', 'root.zig')}",
+            f"-Mcore/common={os.path.join(src, 'core', 'common', 'root.zig')}",
         ]
 
         self.spawn(

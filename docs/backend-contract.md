@@ -1,11 +1,14 @@
 # Backend contract
 
 **Status:** in progress for milestone M4 (`docs/DELIA_REFACTOR_PLAN.md`, section 9).
-`src/backends/alsa/` implements sections 3 to 7 for playback (`device.zig`, `pcm.zig`,
+`src/core/backends/alsa/` implements sections 3 to 7 for playback (`device.zig`, `pcm.zig`,
 `loop.zig`, `convert.zig`, see its `README.md`); the old backend and graph were deleted in
-October 2026, before the M4a hardware run, and are in git history. Remaining for M4a:
-`src/examples.zig` on `ExecutionPlan` and the documented `hw:` run.
-**Sketches:** two self-contained files under `docs/examples/`.
+October 2026, before the M4a hardware run, and are in git history. M4b's code is done (October
+2026): every section 4 rule has a scripted test in `loop.zig` against `ScriptedPcm`
+(section 9). Still owed from M4a: `src/examples.zig` on `ExecutionPlan` and the documented
+`hw:` run, which is also the first real-timing check of the M4b loop. Next: M4c.
+**Sketches:** two self-contained files under `docs/examples/`, kept as the design record; the
+module's tests supersede them.
 `device_loop_sketch.zig` (9 tests, `zig test docs/examples/device_loop_sketch.zig`) drives the
 loop with a scripted PCM, so the transfer rules in section 4 are tested without hardware.
 `alsa_device_sketch.zig` (6 tests) is the real seam and the device; it links alsa-lib
@@ -19,14 +22,15 @@ backend is the callback signature in section 2; everything else here is how the 
 
 | File | Contents | Links alsa-lib |
 |---|---|---|
-| `src/backends/alsa/convert.zig` | `SampleFormat`, `SampleConverter(fmt)`: device bytes to and from planar `f32` blocks, one pass. Backend-neutral in content; moves up to `src/backends/` when a second backend needs it | no |
-| `src/backends/alsa/loop.zig` | `PcmError`, `Region`, `Stats`, `LoopOptions`, `PlaybackLoop(Ctx, Pcm, fmt)`: the policy, generic over the seam | no |
-| `src/backends/alsa/pcm.zig` | `AlsaPcm`: the seam over `snd_pcm_*`; `regionFromArea` | yes |
-| `src/backends/alsa/device.zig` | `PlaybackDevice(Ctx, fmt)` (later `CaptureDevice`, `FullDuplexDevice`): open, negotiate, prepare, own the seam and the loop | yes |
+| `src/core/backends/alsa/convert.zig` | `SampleFormat`, `SampleConverter(fmt)`: device bytes to and from planar `f32` blocks, one pass. Backend-neutral in content; moves up to `src/core/backends/` when a second backend needs it | no |
+| `src/core/backends/alsa/loop.zig` | `LoopError`, `Stats`, `LoopOptions`, `PlaybackLoop(Ctx, Pcm, fmt)`: the policy, generic over the seam; the scripted section 4 tests | no |
+| `src/core/backends/alsa/pcm.zig` | `PcmError`, `Region`, `State`; `Alsa`: the seam over `snd_pcm_*`, `regionFromArea`; `ScriptedPcm`: the test double (section 7) | yes |
+| `src/core/backends/alsa/device.zig` | `PlaybackDevice(Ctx, fmt)` (later `CaptureDevice`, `FullDuplexDevice`): open, negotiate, prepare, own the seam and the loop | yes |
 | `src/core/buffer/ops.zig` | existing `interleave`/`deinterleave`: `f32` layout change only, used when the device already delivers `f32` | no |
 
-`loop.zig` has no C import on purpose: `zig test` on it needs nothing, and the loop's tests
-drive it with a scripted `Pcm` instead of a device.
+`loop.zig` makes no ALSA call: it only sees the `Pcm` it is instantiated with, and its tests
+drive it with `ScriptedPcm` instead of a device. It does import `pcm.zig` for the shared types,
+so the module's `@cImport` (and the alsa-lib headers) are still part of its build.
 
 ## 1. Slices
 
@@ -108,6 +112,16 @@ Everything negotiated or allocated happens in `init`/`prepare`, before `start`.
 One period per iteration. Rules for the MMAP loops; the RW path differs where noted.
 
 - `avail_update` is called immediately before `begin`, each time. Never reuse an earlier value.
+  `begin` sizes its region from the hardware pointer the last `avail_update` read, so a stale
+  one grants less than is free. In particular: after a short `begin`, refresh before the next
+  `begin`; after a successful `wait`, refresh before `begin` (the wait is when the device
+  moved).
+- Readiness is judged against what the period still owes, not a whole period: after a short
+  `begin` of 300 out of 512, 212 free frames are enough. Waiting for 512 makes the write late.
+- A prepared stream reports the whole buffer free, so the loop fills it before starting:
+  `start` is called only when the stream is `prepared` and less than what is owed is free.
+  Whether a stream needs starting is read from the `Pcm`'s `state()`, never tracked in the
+  loop: a resume after suspend leaves the stream `running`, a prepare leaves it `prepared`.
 - `begin` may return fewer frames than requested, including zero. The returned count is the
   **only** frame count for this block: it sizes the block, the callback, and the `commit`.
 - Full duplex: begin both streams, take
@@ -119,9 +133,27 @@ One period per iteration. Rules for the MMAP loops; the RW path differs where no
   never dereferenced.
 - `commit` returning fewer frames than requested, or an error, is a **discontinuity**, not a
   rollback. Frames that were rendered but not committed are lost; the callback is not called
-  again for them. The policy is: recover, count, continue with the next period.
-- Zero progress (`begin` returns 0, or `commit` returns 0) is bounded: after
-  `max_zero_transfers` consecutive occurrences the loop returns `no_progress`.
+  again for them.
+  - A short count is not an error and does not recover: count it (`short_commits`,
+    `discontinuities`) and end the period. If the stream really did xrun, the next period's
+    `avail_update` reports it and recovery happens there, counted as a real xrun. Recovering
+    on a short count would `snd_pcm_prepare` a running stream, dropping everything queued, and
+    count an xrun the device never reported.
+  - An error recovers (`recover`), counts a discontinuity, and ends the period.
+- What is counted where is decided by whether rendered audio was lost, not by a count being
+  zero:
+
+  | Outcome | Callback ran | Frames lost | `zero_transfers` | `short_commits` | `discontinuities` |
+  |---|---|---|---|---|---|
+  | `begin` → 0 | no | none | +1 | | |
+  | `commit(n)` → 0 | yes | n | +1 | +1 | +1 |
+  | `commit(n)` → k, 0 < k < n | yes | n − k | | +1 | +1 |
+  | `commit(0)` → 0 after a zero `begin` | no | none | counted at `begin` | | |
+
+- Zero progress is bounded: after `max_zero_transfers` consecutive zero `begin`s within a
+  period the loop returns `no_progress`. A zero `commit` ends the period (above), so it cannot
+  repeat within one; the next period starts with `avail_update` and, if nothing is free, a
+  `wait`. An early wakeup (less free than owed) is a `wait`, not zero progress.
 - Negative ALSA results are converted to errors at the `Pcm` seam. No unsigned cast ever sees a
   negative value; no success path returns a negative count.
 - RW path: a short `write` keeps the un-written remainder of the staging block and retries
@@ -180,6 +212,13 @@ closed -> configured -> prepared -> running -> stopped
 - `start(ctx, callback)` runs the loop on the calling thread until `stop()` or an unrecoverable
   error. `stop()` may be called from another thread; it sets an atomic flag that the loop checks
   once per period, so with a finite `timeout` it returns within one period plus one timeout.
+- Two atomic flags, one writer each. `stop_requested` is written by `stop()` (any thread) and
+  read by `start()` before each period; `running` is written only by `start()` (true on entry,
+  false on every exit, error returns included) and means "the loop is inside `start`", not "the
+  stream is playing". A `stop()` before `start()` is not lost: that `start` runs no periods. A
+  stop is consumed by the `start` it ends, so stop, edit, recompile, `start` works with no reset.
+- Stream state (`prepared`, `running`, ...) is read from the `Pcm`, on the loop thread only;
+  the loop keeps no copy of it.
 - Recovery is owned by the loop thread. Nothing else calls `snd_pcm_prepare`/`snd_pcm_resume`.
 - Each stream recovers itself. A playback xrun does not prepare the capture handle, and the other
   way round. Linked streams recover through the master only, because `snd_pcm_link` joins their
@@ -187,8 +226,11 @@ closed -> configured -> prepared -> running -> stopped
 - Recovery that fails after a bounded retry returns from `start` with the error; the device is in
   `stopped` and `prepare` is needed before `start` again.
 - Diagnostics are bounded counters on the loop (`xruns`, `discontinuities`, `zero_transfers`,
-  `short_commits`), read and formatted off the loop thread. The loop does not print.
-  `xrunRecovery`'s `std.debug.print` moves behind this rule.
+  `short_commits`), read and formatted off the loop thread. The loop does not print. They are
+  not atomic: read them after `start` returns. Live stats from another thread are M5.
+- `xruns` counts only what the device reported (`xrun` or `suspended` from a seam call). A
+  `wait` timeout is neither an xrun nor a discontinuity: the period is skipped so `start` can
+  check `stop_requested`.
 - `deinit` after `stop`. Staging is freed here, never while the loop can touch it.
 
 ## 7. The `Pcm` seam
@@ -203,20 +245,36 @@ wait(timeout_ms)              error!void
 mmapBegin(want)               error!Region        Region { bytes: []u8, frame_count: usize }, frame_count <= want
 mmapCommit(frame_count)       error!usize         may be < frame_count
 recover(err)                  error!void          prepare or resume; bounded
-state()                       State
+state()                       State               open, prepared, running, xrun, draining, paused, suspended, disconnected
 ```
 
-`AlsaPcm` is the thin real implementation: it converts negative results to errors and computes
-the region slice from `areas`, `offset` and `step`. It contains no policy. The scripted one
-replays a list of outcomes and records every committed byte to a "wire" so tests can compare the
-device's output with an offline render.
+`State` is the seam's own enum; `snd_pcm_state_t` never leaves `pcm.zig`. Neither does any other
+alsa-lib type the loop would have to name.
+
+`Alsa` is the thin real implementation: it converts negative results to errors, maps
+`snd_pcm_state_t` to `State`, and computes the region slice from `areas`, `offset` and `step`.
+It contains no policy.
+
+`ScriptedPcm` (in `pcm.zig`, used only by tests) replays a script of outcomes and records every
+committed byte to a "wire" so tests can compare the device's output with an offline render. It
+models what the rules in section 4 depend on:
+
+- a step is consumed only by the call it names, in order, so a test can assert the whole
+  script was reached (`next_step == script.len`); unscripted calls succeed;
+- `begin` is bounded by the avail of the last `availUpdate` minus what was committed since, as
+  in ALSA, so a missing refresh shows up as a short or zero `begin`;
+- `start` on a stream that is not `prepared` fails, as `snd_pcm_start` does (`EBADFD`);
+- `recover` leaves the stream `prepared`, or `running` when scripted (a successful resume);
+- a call log, for ordering rules ("`availUpdate` immediately before every `begin`");
+- fixed storage allocated in `init`, so tests can count allocations across periods;
+- a call budget, so a loop that never stops fails a test instead of hanging it.
 
 ## 8. Ownership
 
 | Value | Owns | Freed by |
 |---|---|---|
 | `HalfDuplexDevice` / `FullDuplexDevice` | PCM handle(s), staging buffer(s), RW transfer buffer(s) | `deinit`, after `stop` |
-| the loop | counters, running flag | with the device |
+| the loop | counters, `running` and `stop_requested` flags | with the device |
 | `Ctx` | the plan and everything it needs | the caller, after `deinit` |
 
 The device never owns or sees the `ExecutionPlan`. A block handed to the callback is borrowed
@@ -229,25 +287,39 @@ with `begin` returning 512, 300 and 212 frames over two periods of 512 produces,
 bytes identical to one offline render of 1024 frames converted with `writeInterleaved`. The
 split is invisible because phase lives in the node, not in the block.
 
-Scripted (M4a sketch, M4b real):
+Scripted (M4a sketch, M4b real). Loop tests are in `loop.zig` against `ScriptedPcm`, converter
+tests in `convert.zig`, device tests on ALSA's `null` plugin in `device.zig`:
 
-- [x] blocks of 512, 300 and 212 equal one offline render byte for byte (prediction above; sketch)
-- [ ] `begin` shorter than requested: callback gets exactly the returned count, commit matches
-- [ ] failed `begin`: callback not called, region not touched (sentinel), recovery counted, next
+- [x] blocks of 512, 300 and 212 equal one offline render byte for byte (prediction above)
+- [x] `begin` shorter than requested: callback gets exactly the returned count, commit matches
+- [x] `availUpdate` immediately before every `begin`: after a short `begin` and after a `wait`
+- [x] early wakeup (less free than owed) waits again; it is not zero progress
+- [x] the second half of a split period does not wait for a whole period
+- [x] failed `begin`: callback not called, region not touched (sentinel), recovery counted, next
       period proceeds
-- [ ] short `commit`: counted as discontinuity, callback not called again for the lost frames
-- [ ] zero progress: `no_progress` after `max_zero_transfers`
-- [ ] `stop()` from another thread returns `start` within one period
-- [ ] encode clamps: `1.5` and `-1.5` map to `maxInt` and `-maxInt`; no panic
-- [ ] `S16_LE` round trip within `1 / 32767`; wrong byte length rejected, nothing written
-- [ ] staging padding keeps its sentinel after a short block
-- [ ] the loop allocates nothing after `prepare` (allocation count unchanged over 100 periods)
+- [x] short `commit`: counted as discontinuity, not an xrun, no recovery; callback not called
+      again for the lost frames
+- [x] `commit` returning 0 counts as a zero transfer
+- [x] zero progress: `no_progress` after `max_zero_transfers`
+- [x] after an xrun the prepared stream is filled and started again; staging is not cleared
+- [x] a stream resumed after suspend is `running` and is not started again
+- [x] a `wait` timeout skips the period without recovery
+- [x] `stop()` from another thread returns `start` within one period (scripted and `null`)
+- [x] `stop()` before `start()` is not lost: no periods run (scripted and `null`)
+- [x] `start()` again after `stop()` renders again (`null`)
+- [x] encode clamps: `1.5` and `-1.5` map to `maxInt` and `-maxInt`; no panic
+- [x] `S16_LE` round trip within `1 / 32767`; wrong byte length rejected, nothing written
+- [x] converter never reads or writes padding past `frame_count`
+- [x] staging padding keeps its sentinel after a short block
+- [x] the loop allocates nothing after `init` (failing allocator armed, 100 periods)
+- [x] `null` device: `prepared` after `prepare`, `running` after `start`; no xruns,
+      discontinuities, short commits or zero transfers
 - [ ] full duplex (M4c): `begin` returns 512 and 300, both streams commit 300, callback sees 300
 - [ ] full duplex (M4c): xrun on capture prepares capture only
 
-Hardware, documented in `src/backends/alsa/README.md` with card, kernel, rate, period, access:
+Hardware, documented in `src/core/backends/alsa/README.md` with card, kernel, rate, period, access:
 
-- [ ] M4a: `src/examples.zig` plays the fan-in graph from `src/graph/examples.zig` on `hw:` for
+- [ ] M4a: `src/examples.zig` plays the fan-in graph from `src/core/graph/examples.zig` on `hw:` for
       60 s with zero xruns at 512/48000
 - [ ] M4c: full-duplex loopback (capture fed to output) for 60 s; measured round-trip latency
       recorded

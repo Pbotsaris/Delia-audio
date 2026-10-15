@@ -84,18 +84,18 @@ pub fn AudioBufferPool(comptime T: type) type {
 const OpError = error{ shape_mismatch, forbidden_overlap };
 
 pub fn clear(comptime T: type, dst: AudioBlock(T)) void {
-    for (0..dst.channel_count) |c| @memset(dst.channel(c), 0);
+    for (0..dst.channel_count) |c| @memset(dst.getSamples(c), 0);
 }
 
 pub fn copy(comptime T: type, dst: AudioBlock(T), src: ConstAudioBlock(T)) OpError!void {
     if (dst.channel_count != src.channel_count or dst.frame_count != src.frame_count) return error.shape_mismatch;
-    for (0..dst.channel_count) |c| @memcpy(dst.channel(c), src.channel(c));
+    for (0..dst.channel_count) |c| @memcpy(dst.getSamples(c), src.getSamples(c));
 }
 
 pub fn accumulate(comptime T: type, dst: AudioBlock(T), src: ConstAudioBlock(T)) OpError!void {
     if (dst.channel_count != src.channel_count or dst.frame_count != src.frame_count) return error.shape_mismatch;
     for (0..dst.channel_count) |c| {
-        for (dst.channel(c), src.channel(c)) |*d, s| d.* += s;
+        for (dst.getSamples(c), src.getSamples(c)) |*d, s| d.* += s;
     }
 }
 
@@ -179,7 +179,7 @@ pub fn TestGain(comptime T: type) type {
         pub fn prepare(_: *@This(), _: Node(T).PrepareContext) NodeError!void {}
         pub fn process(self: *@This(), ctx: Node(T).ProcessContext) void {
             for (0..ctx.outputs[0].channel_count) |c| {
-                for (ctx.outputs[0].channel(c), ctx.inputs[0].channel(c)) |*o, i| o.* = i * self.gain;
+                for (ctx.outputs[0].getSamples(c), ctx.inputs[0].getSamples(c)) |*o, i| o.* = i * self.gain;
             }
         }
     };
@@ -197,11 +197,11 @@ pub fn TestSine(comptime T: type) type {
         }
         pub fn process(self: *@This(), ctx: Node(T).ProcessContext) void {
             const out = ctx.outputs[0];
-            for (out.channel(0)) |*o| {
+            for (out.getSamples(0)) |*o| {
                 o.* = @sin(self.phase);
                 self.phase += self.inc;
             }
-            for (1..out.channel_count) |c| @memcpy(out.channel(c), out.channel(0));
+            for (1..out.channel_count) |c| @memcpy(out.getSamples(c), out.getSamples(0));
         }
     };
 }
@@ -612,8 +612,8 @@ test "chain: Sine -> Gain -> output over four blocks matches the reference, phas
 
     for (0..4) |b| try plan.render(out.block(b * 64, 64));
 
-    for (out.channel(0), 0..) |sample, n| try testing.expectApproxEqAbs(0.5 * referenceSine(440, n), sample, 1e-4);
-    try testing.expectEqualSlices(f32, out.channel(0), out.channel(1));
+    for (out.getSamples(0), 0..) |sample, n| try testing.expectApproxEqAbs(0.5 * referenceSine(440, n), sample, 1e-4);
+    try testing.expectEqualSlices(f32, out.getSamples(0), out.getSamples(1));
 }
 
 test "chain: op list and slot count are pinned" {
@@ -654,7 +654,7 @@ test "partial last block (64, 64, 17) is still continuous; zero frames is a no-o
     try plan.render(out.block(64, 64));
     try plan.render(out.block(128, 17));
 
-    for (out.channel(0), 0..) |sample, n| try testing.expectApproxEqAbs(0.5 * referenceSine(440, n), sample, 1e-4);
+    for (out.getSamples(0), 0..) |sample, n| try testing.expectApproxEqAbs(0.5 * referenceSine(440, n), sample, 1e-4);
 }
 
 test "render writes every slot's active frames and nothing past them" {
@@ -674,8 +674,8 @@ test "render writes every slot's active frames and nothing past them" {
     for (0..plan.pool.slot_count) |s| {
         const full = try plan.pool.borrowSlot(s, 64);
         for (0..2) |c| {
-            for (full.channel(c)[0..10]) |sample| try testing.expect(sample != 9);
-            for (full.channel(c)[10..]) |sample| try testing.expectEqual(9, sample);
+            for (full.getSamples(c)[0..10]) |sample| try testing.expect(sample != 9);
+            for (full.getSamples(c)[10..]) |sample| try testing.expectEqual(9, sample);
         }
     }
 }
@@ -726,7 +726,7 @@ test "fan-out and fan-in: Sine -> Gain(0.25), Sine -> Gain(0.5), both -> output"
     defer out.deinit(testing.allocator);
     try plan.render(out.block(0, 64));
 
-    for (out.channel(0), 0..) |sample, n| try testing.expectApproxEqAbs(0.75 * referenceSine(440, n), sample, 1e-4);
+    for (out.getSamples(0), 0..) |sample, n| try testing.expectApproxEqAbs(0.75 * referenceSine(440, n), sample, 1e-4);
 }
 
 test "diamond: Sine -> A, Sine -> B, A -> C, B -> C, C -> output" {
@@ -754,7 +754,7 @@ test "diamond: Sine -> A, Sine -> B, A -> C, B -> C, C -> output" {
     defer out.deinit(testing.allocator);
     try plan.render(out.block(0, 64));
 
-    for (out.channel(0), 0..) |sample, n| try testing.expectApproxEqAbs(1.5 * referenceSine(440, n), sample, 1e-4);
+    for (out.getSamples(0), 0..) |sample, n| try testing.expectApproxEqAbs(1.5 * referenceSine(440, n), sample, 1e-4);
 }
 
 test "order does not depend on insertion order: lowest ready index first" {

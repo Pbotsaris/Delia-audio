@@ -44,7 +44,7 @@ fn Block(comptime T: type, comptime mutability: Mutability) type {
             };
         }
 
-        pub fn channel(self: Self, channel_index: usize) Samples {
+        pub fn getSamples(self: Self, channel_index: usize) Samples {
             std.debug.assert(channel_index < self.channel_count);
             return self.samples[channel_index * self.channel_stride ..][0..self.frame_count];
         }

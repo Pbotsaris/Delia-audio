@@ -6,12 +6,12 @@ pub const compiler = @import("compiler.zig");
 pub const examples = @import("examples.zig");
 
 test {
-    _ = @import("nodes/root.zig");
-    _ = @import("node.zig");
-    _ = builder;
-    _ = plan;
-    _ = compiler;
-    _ = examples;
+    @import("std").testing.refAllDecls(@import("nodes/root.zig"));
+    @import("std").testing.refAllDecls(@import("node.zig"));
+    @import("std").testing.refAllDecls(builder);
+    @import("std").testing.refAllDecls(plan);
+    @import("std").testing.refAllDecls(compiler);
+    @import("std").testing.refAllDecls(examples);
 }
 
 // ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ test {
 // ---------------------------------------------------------------------------
 
 const std = @import("std");
-const buffer = @import("buffer");
+const buffer = @import("core/buffer");
 const testing = std.testing;
 
 test "builder - add, connect, mark output, reject bad edges" {
@@ -103,11 +103,11 @@ test "plan - hand-built Oscillator -> Gain -> copy_out renders one block" {
 
     try p.render(out);
 
-    for (out.channel(0), 0..) |sample, n| {
+    for (out.getSamples(0), 0..) |sample, n| {
         const expected: f64 = 0.5 * @sin(2 * std.math.pi * 440 * @as(f64, @floatFromInt(n)) / 48000);
         try testing.expectApproxEqAbs(@as(f32, @floatCast(expected)), sample, 1e-5);
     }
-    try testing.expectEqualSlices(f32, out.channel(0), out.channel(1));
+    try testing.expectEqualSlices(f32, out.getSamples(0), out.getSamples(1));
 
     // wrong channel count is rejected before anything runs
     var mono = try buffer.OwnedAudioBuffer(f32).init(allocator, .{ .channel_count = 1, .max_frames = 16 });

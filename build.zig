@@ -45,10 +45,14 @@ pub fn build(b: *std.Build) void {
     Alsa.install(b);
 
     ////////////////////////// MODULES ///////////////////////////////////////////
-    // One named module per subsystem so files import `@import("buffer")` rather than
-    // `@import("../../core/buffer/root.zig")`. A file belongs to exactly one module and a
-    // module may only import files below its root, so the imports below are the real
-    // dependency graph: a cycle or a missing edge fails at compile time.
+    // One named module per subsystem so files import `@import("core/buffer")` rather than
+    // `@import("../buffer/root.zig")`. A file belongs to exactly one module and a module
+    // may only import files below its root, so the imports below are the real dependency
+    // graph: a cycle or a missing edge fails at compile time.
+    //
+    // `core/` and `core/backends/` are folders, not modules: a `core` module rooted at
+    // `src/core/root.zig` would contain the files of `core/buffer`, and a file may not
+    // belong to two modules. The slash is only part of the name.
     //
     // The test runner only collects `test` blocks from the files of the module it was
     // given, so every module is also its own test root (see TESTS below).
@@ -68,40 +72,35 @@ pub fn build(b: *std.Build) void {
     });
 
     const common = b.createModule(.{
-        .root_source_file = b.path("src/common/root.zig"),
+        .root_source_file = b.path("src/core/common/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const dsp = b.createModule(.{
-        .root_source_file = b.path("src/dsp/dsp.zig"),
+        .root_source_file = b.path("src/dsp/root.zig"),
         .target = target,
         .optimize = optimize,
     });
-    dsp.addImport("common", common);
+
+    dsp.addImport("core/common", common);
 
     const graph = b.createModule(.{
-        .root_source_file = b.path("src/graph/root.zig"),
+        .root_source_file = b.path("src/core/graph/root.zig"),
         .target = target,
         .optimize = optimize,
     });
-    graph.addImport("buffer", buffer);
-    graph.addImport("common", common);
+    graph.addImport("core/buffer", buffer);
+    graph.addImport("core/common", common);
 
     const alsa = b.createModule(.{
-        .root_source_file = b.path("src/backends/alsa/root.zig"),
+        .root_source_file = b.path("src/core/backends/alsa/root.zig"),
         .target = target,
         .optimize = optimize,
     });
-    alsa.addImport("buffer", buffer);
+    alsa.addImport("core/buffer", buffer);
+    alsa.addImport("dsp", dsp);
     Alsa.link(b, alsa);
-
-    const backends = b.createModule(.{
-        .root_source_file = b.path("src/backends/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    backends.addImport("alsa", alsa);
 
     // One root module shared by the executable, the compile-only check, and the tests.
     const root = b.createModule(.{
@@ -111,13 +110,12 @@ pub fn build(b: *std.Build) void {
     });
 
     const modules = [_]Named{
-        .{ .name = "buffer", .mod = buffer },
+        .{ .name = "core/buffer", .mod = buffer },
+        .{ .name = "core/common", .mod = common },
+        .{ .name = "core/graph", .mod = graph },
+        .{ .name = "core/backends/alsa", .mod = alsa },
         .{ .name = "utils", .mod = utils },
-        .{ .name = "common", .mod = common },
         .{ .name = "dsp", .mod = dsp },
-        .{ .name = "graph", .mod = graph },
-        .{ .name = "alsa", .mod = alsa },
-        .{ .name = "backends", .mod = backends },
     };
 
     for (modules) |m| root.addImport(m.name, m.mod);
@@ -137,13 +135,15 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     ////////////////////////// CHECK (zls build-on-save) /////////////////////////
+    // Analysis is lazy: the exe alone only checks what `main` reaches. The test binaries
+    // (compiled, not run, in TESTS below) cover every module's tests and what they call.
 
     const exe_check = b.addExecutable(.{
         .name = "delia_check",
         .root_module = root,
     });
 
-    const check = b.step("check", "Check if the app compiles");
+    const check = b.step("check", "Check if the app and all tests compile");
     check.dependOn(&exe_check.step);
 
     ////////////////////////// TESTS /////////////////////////////////////////////
@@ -161,12 +161,14 @@ pub fn build(b: *std.Build) void {
     const test_roots = modules ++ [_]Named{.{ .name = "root", .mod = root }};
 
     for (test_roots) |m| {
+        const file_name = std.mem.replaceOwned(u8, b.allocator, m.name, "/", "_") catch @panic("OOM");
         const unit_tests = b.addTest(.{
-            .name = b.fmt("test_{s}", .{m.name}),
+            .name = b.fmt("test_{s}", .{file_name}),
             .root_module = m.mod,
             .filters = test_filters,
         });
 
+        check.dependOn(&unit_tests.step);
         test_step.dependOn(&b.addRunArtifact(unit_tests).step);
     }
 

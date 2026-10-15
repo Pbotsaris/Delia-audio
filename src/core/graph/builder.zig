@@ -1,5 +1,5 @@
 const std = @import("std");
-const buffer = @import("buffer");
+const buffer = @import("core/buffer");
 const Node = @import("node.zig").Node;
 
 pub const Edge = struct {

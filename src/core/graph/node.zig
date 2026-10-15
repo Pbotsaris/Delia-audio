@@ -3,8 +3,8 @@
 //! and the name are comptime declarations on the implementing struct, checked in `init`.
 
 const std = @import("std");
-const buffer = @import("buffer");
-const specs = @import("common").audio_specs;
+const buffer = @import("core/buffer");
+const specs = @import("core/common").audio_specs;
 
 pub const Ports = struct {
     inputs: u8,
@@ -175,7 +175,7 @@ const TestConstant = struct {
 
     pub fn process(self: *TestConstant, ctx: Node(f32).ProcessContext) void {
         for (ctx.outputs) |out| {
-            for (0..out.channel_count) |ch| @memset(out.channel(ch), self.value);
+            for (0..out.channel_count) |ch| @memset(out.getSamples(ch), self.value);
         }
     }
 };
@@ -190,7 +190,7 @@ const TestScale = struct {
 
     pub fn process(self: *TestScale, ctx: Node(f64).ProcessContext) void {
         for (0..ctx.outputs[0].channel_count) |ch| {
-            for (ctx.outputs[0].channel(ch), ctx.inputs[0].channel(ch)) |*o, i| o.* = i * self.scale;
+            for (ctx.outputs[0].getSamples(ch), ctx.inputs[0].getSamples(ch)) |*o, i| o.* = i * self.scale;
         }
     }
 };
@@ -229,7 +229,7 @@ test "Node - prepare and process dispatch to the implementation" {
     const out = try owned.borrowBlock(8);
     node.process(.{ .inputs = &.{}, .outputs = &.{out}, .frame_count = 8 });
 
-    for (0..2) |ch| try expectAll(f32, 0.25, out.channel(ch));
+    for (0..2) |ch| try expectAll(f32, 0.25, out.getSamples(ch));
 }
 
 test "Node - separate input and output over a partial block, input untouched" {
@@ -238,20 +238,20 @@ test "Node - separate input and output over a partial block, input untouched" {
 
     // sentinel over the full capacity of the output, then process only 5 frames
     const full_out = try pool.borrowSlot(1, 16);
-    for (0..2) |ch| @memset(full_out.channel(ch), 9);
+    for (0..2) |ch| @memset(full_out.getSamples(ch), 9);
 
     const in = try pool.borrowSlot(0, 5);
     const out = try pool.borrowSlot(1, 5);
-    for (0..2) |ch| @memset(in.channel(ch), 1);
+    for (0..2) |ch| @memset(in.getSamples(ch), 1);
 
     var scale = TestScale{ .scale = 0.5 };
     const node = Node(f64).init(&scale);
     node.process(.{ .inputs = &.{in.asConst()}, .outputs = &.{out}, .frame_count = 5 });
 
     for (0..2) |ch| {
-        try expectAll(f64, 0.5, full_out.channel(ch)[0..5]);
-        try expectAll(f64, 9, full_out.channel(ch)[5..]);
-        try expectAll(f64, 1, in.channel(ch));
+        try expectAll(f64, 0.5, full_out.getSamples(ch)[0..5]);
+        try expectAll(f64, 9, full_out.getSamples(ch)[5..]);
+        try expectAll(f64, 1, in.getSamples(ch));
     }
 }
 

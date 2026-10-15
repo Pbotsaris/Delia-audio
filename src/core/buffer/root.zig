@@ -26,10 +26,10 @@ pub const interleave = ops.interleave;
 pub const deinterleave = ops.deinterleave;
 
 test {
-    _ = audio_block;
-    _ = storage;
-    _ = shape;
-    _ = ops;
+    @import("std").testing.refAllDecls(audio_block);
+    @import("std").testing.refAllDecls(storage);
+    @import("std").testing.refAllDecls(shape);
+    @import("std").testing.refAllDecls(ops);
 }
 
 const testing = std.testing;
@@ -55,7 +55,7 @@ test "AudioBlock - mono, stereo and multichannel views address the right samples
 
         for (0..channel_count) |ch| {
             const first: f32 = @floatFromInt(ch * 4);
-            try expectEqualSlices(f32, &.{ first, first + 1, first + 2, first + 3 }, block.channel(ch));
+            try expectEqualSlices(f32, &.{ first, first + 1, first + 2, first + 3 }, block.getSamples(ch));
         }
     }
 }
@@ -64,7 +64,7 @@ test "AudioBlock - f64 blocks" {
     var samples = [_]f64{ 1, 2, 3, 4 };
     const block = try AudioBlock(f64).init(&samples, .{ .channel_count = 2, .frame_count = 2, .channel_stride = 2 });
 
-    try expectEqualSlices(f64, &.{ 3, 4 }, block.channel(1));
+    try expectEqualSlices(f64, &.{ 3, 4 }, block.getSamples(1));
 }
 
 test "AudioBlock - partial block: channel starts at stride, not at frame_count" {
@@ -75,8 +75,8 @@ test "AudioBlock - partial block: channel starts at stride, not at frame_count" 
         .channel_stride = 512,
     });
 
-    try expectEqual(128, block.channel(1).len);
-    try expectEqual(&samples[512], &block.channel(1)[0]);
+    try expectEqual(128, block.getSamples(1).len);
+    try expectEqual(&samples[512], &block.getSamples(1)[0]);
 }
 
 test "AudioBlock - storage requirement follows stride, not frame count" {
@@ -102,7 +102,7 @@ test "AudioBlock - sub-block preserves stride and rejects out of range" {
     try expectEqual(8, sub.channel_stride);
     try expectEqual(3, sub.frame_count);
 
-    for (0..sub.channel_count) |ch| @memset(sub.channel(ch), 1);
+    for (0..sub.channel_count) |ch| @memset(sub.getSamples(ch), 1);
 
     const expected = [_]f32{ 0, 0, 1, 1, 1, 0, 0, 0 } ** 2;
     try expectEqualSlices(f32, &expected, &samples);
@@ -112,7 +112,7 @@ test "AudioBlock - sub-block preserves stride and rejects out of range" {
 
     // a sub-block of a sub-block is still relative to the original storage
     const nested = try sub.subBlock(1, 1);
-    try expectEqual(&samples[8 + 3], &nested.channel(1)[0]);
+    try expectEqual(&samples[8 + 3], &nested.getSamples(1)[0]);
 }
 
 test "AudioBlock - zero-frame block is valid and operations are no-ops" {
@@ -121,7 +121,7 @@ test "AudioBlock - zero-frame block is valid and operations are no-ops" {
     const block = try AudioBlock(f32).init(&samples, .{ .channel_count = 2, .frame_count = 0, .channel_stride = 8 });
     const src = try ConstAudioBlock(f32).init(&other, .{ .channel_count = 2, .frame_count = 0, .channel_stride = 8 });
 
-    try expectEqual(0, block.channel(1).len);
+    try expectEqual(0, block.getSamples(1).len);
 
     clear(f32, block);
     try copy(f32, block, src);
@@ -146,11 +146,11 @@ test "AudioBlock - asConst shares samples and is read-only" {
     const block = try AudioBlock(f32).init(&samples, .{ .channel_count = 2, .frame_count = 2, .channel_stride = 2 });
     const const_block = block.asConst();
 
-    try expect(@TypeOf(const_block.channel(0)) == []const f32);
-    try expect(@TypeOf(block.channel(0)) == []f32);
+    try expect(@TypeOf(const_block.getSamples(0)) == []const f32);
+    try expect(@TypeOf(block.getSamples(0)) == []f32);
 
-    block.channel(1)[0] = 9;
-    try expectEqual(9, const_block.channel(1)[0]);
+    block.getSamples(1)[0] = 9;
+    try expectEqual(9, const_block.getSamples(1)[0]);
 }
 
 test "OwnedAudioBuffer - aligned channel starts, zeroed, bounded by max_frames" {
@@ -163,8 +163,8 @@ test "OwnedAudioBuffer - aligned channel starts, zeroed, bounded by max_frames" 
     try expectAll(f32, 0, owned.storage);
 
     const block = try owned.borrowBlock(100);
-    try expect(@intFromPtr(block.channel(0).ptr) % 64 == 0);
-    try expect(@intFromPtr(block.channel(1).ptr) % 64 == 0);
+    try expect(@intFromPtr(block.getSamples(0).ptr) % 64 == 0);
+    try expect(@intFromPtr(block.getSamples(1).ptr) % 64 == 0);
 
     try expectError(error.out_of_range, owned.borrowBlock(101));
 }
@@ -174,7 +174,7 @@ test "OwnedAudioBuffer - f64 stride rounds to 8 samples" {
     defer owned.deinit(testing.allocator);
 
     try expectEqual(104, owned.channel_stride);
-    try expect(@intFromPtr((try owned.borrowBlock(100)).channel(1).ptr) % 64 == 0);
+    try expect(@intFromPtr((try owned.borrowBlock(100)).getSamples(1).ptr) % 64 == 0);
 }
 
 test "OwnedAudioBuffer - rejects zero channels" {
@@ -195,15 +195,15 @@ test "AudioBufferPool - slots are independent and bounded" {
     const b = try pool.borrowSlot(1, 64);
     const c = try pool.borrowSlot(2, 64);
 
-    for (0..2) |ch| @memset(b.channel(ch), 1);
+    for (0..2) |ch| @memset(b.getSamples(ch), 1);
 
     try expect(!blocksOverlap(f32, a.asConst(), b.asConst()));
     try expect(!blocksOverlap(f32, b.asConst(), c.asConst()));
 
     for (0..2) |ch| {
-        try expectAll(f32, 0, a.channel(ch));
-        try expectAll(f32, 0, c.channel(ch));
-        try expect(@intFromPtr(c.channel(ch).ptr) % 64 == 0);
+        try expectAll(f32, 0, a.getSamples(ch));
+        try expectAll(f32, 0, c.getSamples(ch));
+        try expect(@intFromPtr(c.getSamples(ch).ptr) % 64 == 0);
     }
 
     try expectError(error.out_of_range, pool.borrowSlot(3, 64));
@@ -245,8 +245,8 @@ test "copy and accumulate - reject shape mismatch and overlap, leave destination
     const src = try pool.borrowSlot(1, 16);
 
     for (0..2) |ch| {
-        @memset(dst.channel(ch), 3);
-        @memset(src.channel(ch), 5);
+        @memset(dst.getSamples(ch), 3);
+        @memset(src.getSamples(ch), 5);
     }
 
     var mono_samples = [_]f32{5} ** 16;
@@ -262,7 +262,7 @@ test "copy and accumulate - reject shape mismatch and overlap, leave destination
     try expectError(error.forbidden_overlap, accumulate(f32, dst, dst.asConst()));
     try expectError(error.forbidden_overlap, copy(f32, try dst.subBlock(0, 8), (try dst.subBlock(4, 8)).asConst()));
 
-    for (0..2) |ch| try expectAll(f32, 3, dst.channel(ch));
+    for (0..2) |ch| try expectAll(f32, 3, dst.getSamples(ch));
 
     // different frame ranges of one parent share storage but no samples
     try copy(f32, try dst.subBlock(0, 8), (try dst.subBlock(8, 8)).asConst());
@@ -279,8 +279,8 @@ test "copy - accepts differing strides" {
     try expect(padded_dst.channel_stride != packed_src.channel_stride);
 
     try copy(f32, padded_dst, packed_src);
-    try expectEqualSlices(f32, &.{ 1, 2, 3, 4 }, padded_dst.channel(0));
-    try expectEqualSlices(f32, &.{ 5, 6, 7, 8 }, padded_dst.channel(1));
+    try expectEqualSlices(f32, &.{ 1, 2, 3, 4 }, padded_dst.getSamples(0));
+    try expectEqualSlices(f32, &.{ 5, 6, 7, 8 }, padded_dst.getSamples(1));
 }
 
 test "accumulate sums, copy replaces" {
@@ -291,16 +291,16 @@ test "accumulate sums, copy replaces" {
     const a = try pool.borrowSlot(1, 4);
     const b = try pool.borrowSlot(2, 4);
 
-    @memset(a.channel(0), 0.25);
-    @memset(b.channel(0), 0.5);
+    @memset(a.getSamples(0), 0.25);
+    @memset(b.getSamples(0), 0.5);
 
     clear(f32, mix);
     try accumulate(f32, mix, a.asConst());
     try accumulate(f32, mix, b.asConst());
-    try expectAll(f32, 0.75, mix.channel(0));
+    try expectAll(f32, 0.75, mix.getSamples(0));
 
     try copy(f32, mix, b.asConst());
-    try expectAll(f32, 0.5, mix.channel(0));
+    try expectAll(f32, 0.5, mix.getSamples(0));
 }
 
 test "interleave and deinterleave - round trip, wrong packed length rejected" {
@@ -313,8 +313,8 @@ test "interleave and deinterleave - round trip, wrong packed length rejected" {
     const block = try owned.borrowBlock(3);
     try deinterleave(f32, block, &device_in);
 
-    try expectEqualSlices(f32, &.{ 1, 2, 3 }, block.channel(0));
-    try expectEqualSlices(f32, &.{ -1, -2, -3 }, block.channel(1));
+    try expectEqualSlices(f32, &.{ 1, 2, 3 }, block.getSamples(0));
+    try expectEqualSlices(f32, &.{ -1, -2, -3 }, block.getSamples(1));
 
     try interleave(f32, &device_out, block.asConst());
     try expectEqualSlices(f32, &device_in, &device_out);
@@ -322,7 +322,7 @@ test "interleave and deinterleave - round trip, wrong packed length rejected" {
     try expectError(error.shape_mismatch, interleave(f32, device_out[0..4], block.asConst()));
     try expectError(error.shape_mismatch, deinterleave(f32, block, device_in[0..4]));
     try expectEqualSlices(f32, &device_in, &device_out);
-    try expectEqualSlices(f32, &.{ 1, 2, 3 }, block.channel(0));
+    try expectEqualSlices(f32, &.{ 1, 2, 3 }, block.getSamples(0));
 }
 
 test "interleave and deinterleave - reject packed slice that overlaps the block" {

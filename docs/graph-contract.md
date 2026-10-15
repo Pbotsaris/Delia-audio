@@ -1,22 +1,22 @@
 # Graph contract
 
-**Status:** implemented in `src/graph/` for milestone M3 (`docs/DELIA_REFACTOR_PLAN.md`,
-sections 4.5 and 7). Every acceptance item in section 7 has a test in `src/graph/compiler.zig`.
+**Status:** implemented in `src/core/graph/` for milestone M3 (`docs/DELIA_REFACTOR_PLAN.md`,
+sections 4.5 and 7). Every acceptance item in section 7 has a test in `src/core/graph/compiler.zig`.
 **Sketches:** `docs/examples/graph_node_sketch.zig`, `graph_plan_sketch.zig` and
 `graph_compiler_sketch.zig` preceded the implementation and use stand-in buffers and nodes; the
-code in `src/graph/` is authoritative.
+code in `src/core/graph/` is authoritative.
 
 Builds on `docs/buffer-contract.md`. Section 8 of that document (node I/O) is the node's side of
 this contract and is not repeated here.
 
 | File | Contents |
 |---|---|
-| `src/graph/node.zig` | `Node(T)`, `Ports`, `PrepareContext`, `ProcessContext`, `NodeError` |
-| `src/graph/nodes/gain.zig`, `src/graph/nodes/oscillator.zig` | first nodes on the new interface |
-| `src/graph/nodes/root.zig`, `src/graph/root.zig` | aggregators |
-| `src/graph/builder.zig` | `GraphBuilder(T)`: nodes, edges, output marker |
-| `src/graph/compiler.zig` | `Compiler(T).compile()`: builder to plan |
-| `src/graph/plan.zig` | `ExecutionPlan(T)`, `Op`, `render()` |
+| `src/core/graph/node.zig` | `Node(T)`, `Ports`, `PrepareContext`, `ProcessContext`, `NodeError` |
+| `src/core/graph/nodes/gain.zig`, `src/core/graph/nodes/oscillator.zig` | first nodes on the new interface |
+| `src/core/graph/nodes/root.zig`, `src/core/graph/root.zig` | aggregators |
+| `src/core/graph/builder.zig` | `GraphBuilder(T)`: nodes, edges, output marker |
+| `src/core/graph/compiler.zig` | `Compiler(T).compile()`: builder to plan |
+| `src/core/graph/plan.zig` | `ExecutionPlan(T)`, `Op`, `render()` |
 
 The old graph (`Graph`, `TopologyQueue`, `Scheduler` on `UniformChannelViews`) was deleted in
 M4a (October 2026); it is in git history before the `remove legacy graph and backend` commit.
